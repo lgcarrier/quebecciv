@@ -17,7 +17,7 @@ québécoise.
 
 ## Ce que montre la carte
 
-- **Territoire** : 22 575 hexagones de 5 km de rayon (environ 65 km² chacun) sur une grille de 202 × 281
+- **Territoire** : 22 619 hexagones de 5 km de rayon (environ 65 km² chacun) sur une grille de 202 × 281
   (56 762 hexagones en tout, avec les voisins et la mer). Projection azimutale équivalente de Lambert (sphérique),
   centrée à 68,5° O, 53,5° N : les aires sont conservées.
 - **Régions** : les 17 régions administratives (régions économiques de Statistique Canada, 2410 à 2490).
@@ -63,12 +63,13 @@ Chaque source a son module dans `pipeline/sources/` et sa provenance (URL, date,
   Chaque municipalité garde au moins un hexagone de terre (celui où elle a le plus de points, même s'il est surtout
   dans l'eau, comme pour une petite île) : toutes les municipalités habitées gardent leur population sur leurs propres
   hexagones (Montréal et l'ouest de l'île, Kirkland, Beaconsfield, L'Île-Perrot, Laval, l'île d'Orléans…).
-- **Saint-Laurent et Saguenay** : plus étroits qu'un hexagone (1 à 3 km), ils seraient coupés par la règle de la
-  majorité. Ils reçoivent un **chenal minimal** d'hexagones d'eau, du lac Saint-Louis à l'estuaire et de Chicoutimi à
-  Tadoussac : la suite d'hexagones qui convertit le moins de terre possible (les plus mouillés d'abord), sans jamais
-  prendre le dernier hexagone de terre d'une municipalité. Le fleuve y paraît plus large qu'en réalité. Les autres
-  rivières (Outaouais, des Prairies, Mille Îles…) ne sont en eau que là où elles occupent la moitié d'un hexagone ;
-  ailleurs, leur tracé de Natural Earth est dessiné quand il existe.
+- **Saint-Laurent et Saguenay** : plus étroits qu'un hexagone (1 à 3 km contre 8,7 km), leurs rives restent de la
+  terre à la règle de la majorité. Ils sont **dessinés à leur largeur réelle** par-dessus les hexagones, du lac
+  Saint-Louis à l'estuaire et de Chicoutimi à Tadoussac : le tracé suit le milieu de l'eau du raster de 500 m et la
+  largeur y est mesurée en travers (`pipeline/core/rivers.py`). À l'île d'Orléans, les deux chenaux sont tracés et
+  l'île apparaît entre eux. Les lacs fluviaux (Saint-Louis, Saint-Pierre), assez larges, restent des hexagones d'eau
+  que le fleuve relie. Les autres rivières (Outaouais, des Prairies, Mille Îles…) ne sont en eau que là où elles
+  occupent la moitié d'un hexagone ; ailleurs, leur tracé de Natural Earth est dessiné quand il existe.
 - L'eau de l'estuaire et du golfe est classée « côte » ou « mer » (reliée au bord de la carte) ; les eaux intérieures,
   « lac ».
 - La frontière Québec – Labrador est celle des fichiers de Statistique Canada.

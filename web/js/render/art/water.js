@@ -724,6 +724,11 @@ export const drawCoastFoam = (ctx, w, opts = {}) => drawShore(ctx, w, opts.cells
 // --- rivers ------------------------------------------------------------------------------------------------------
 // Each river is drawn as a filled ribbon whose width grows from source to mouth (the end that lies lower, or in
 // water), over a darker bank ribbon, with a lighter centre line on top. Rivers outside the canvas are skipped.
+// A river with `w` in world.json (its true width at each vertex, in map units; pts already run source → mouth) is a
+// wide river: the St. Lawrence or the Saguenay, too narrow to be water hexes but far wider than a centre line. It is
+// drawn to scale, with no taper, and never thinner than WIDE_MIN_PX so it still reads when the whole map is in view.
+const WIDE_MIN_PX = 1.8;
+const WIDE_COLOR = "#3f8cc4", WIDE_COLOR_CLEAR = "rgba(63,140,196,0)"; // the rivers' blue, and the same at alpha 0
 
 const riverCache = new WeakMap(); // rivers array -> prepared [{pts (source → mouth), cum, len, bbox, rank}]
 
@@ -743,9 +748,10 @@ function prepRivers(w) {
     let p = rv.pts;
     if (!p || p.length < 4) continue;
     const n = p.length;
+    const wide = Array.isArray(rv.w) && rv.w.length === n / 2 ? rv.w : null;
     // pts run in either direction in world.json; make them run source → mouth.
     const h0 = height(p[0], p[1]), h1 = height(p[n - 2], p[n - 1]);
-    if (h0 != null && h1 != null && h0 < h1) {
+    if (!wide && h0 != null && h1 != null && h0 < h1) {
       const q = [];
       for (let k = n - 2; k >= 0; k -= 2) q.push(p[k], p[k + 1]);
       p = q;
@@ -757,7 +763,18 @@ function prepRivers(w) {
       x0 = Math.min(x0, p[k]); x1 = Math.max(x1, p[k]);
       y0 = Math.min(y0, p[k + 1]); y1 = Math.max(y1, p[k + 1]);
     }
-    prep.push({ pts: p, cum, len: cum[cum.length - 1], bbox: [x0, y0, x1, y1], rank: rv.rank });
+    const wmax = wide ? Math.max(...wide) : 0;
+    // A wide river runs a little way into the water hexes it joins (lake, estuary). `head` and `tail` are the vertex
+    // ranges over water at its two ends: they are drawn fading out, so the ribbon melts into the hex water.
+    let head = 0, tail = n / 2 - 1;
+    if (wide && grid && water) {
+      const wet = (k) => { const c = grid.cellAt(p[k * 2], p[k * 2 + 1]); return c >= 0 && water[c] > 0; };
+      while (head < tail && wet(head)) head++;
+      while (tail > head && wet(tail)) tail--;
+      head = Math.max(0, head - 1); // the solid part starts and ends one vertex inside the water
+      tail = Math.min(n / 2 - 1, tail + 1);
+    }
+    prep.push({ pts: p, cum, len: cum[cum.length - 1], bbox: [x0, y0, x1, y1], rank: rv.rank, wide, wmax, head, tail });
   }
   riverCache.set(rivers, prep);
   return prep;
@@ -773,8 +790,9 @@ function visibleRect(ctx) {
   return [Math.min(xa, xb), Math.min(ya, yb), Math.max(xa, xb), Math.max(ya, yb)];
 }
 
-/** Add a ribbon around polyline p (flat x,y pairs) to path P; halfWidth(k) gives the half width at vertex k. */
-function ribbon(P, p, halfWidth) {
+/** Add a ribbon around polyline p (flat x,y pairs) to path P; halfWidth(k) gives the half width at vertex k.
+ *  With `banks` (a Path2D), the two sides are also added to it as open lines (the shore lines of a wide river). */
+function ribbon(P, p, halfWidth, banks = null, flatEnd = false) {
   const n = p.length / 2;
   const L = new Float64Array(n * 2), Rr = new Float64Array(n * 2);
   for (let k = 0; k < n; k++) {
@@ -801,9 +819,15 @@ function ribbon(P, p, halfWidth) {
   const ex = p[e] - p[Math.max(0, e - 2)], ey = p[e + 1] - p[Math.max(1, e - 1)];
   const el = Math.hypot(ex, ey) || 1;
   const hwEnd = halfWidth(n - 1);
-  P.lineTo(p[e] + (ex / el) * hwEnd * 0.8, p[e + 1] + (ey / el) * hwEnd * 0.8);
+  if (!flatEnd) P.lineTo(p[e] + (ex / el) * hwEnd * 0.8, p[e + 1] + (ey / el) * hwEnd * 0.8);
   for (let k = n - 1; k >= 0; k--) P.lineTo(Rr[k * 2], Rr[k * 2 + 1]);
   P.closePath();
+  if (banks) {
+    for (const side of [L, Rr]) {
+      banks.moveTo(side[0], side[1]);
+      for (let k = 1; k < n; k++) banks.lineTo(side[k * 2], side[k * 2 + 1]);
+    }
+  }
 }
 
 export function drawRivers(ctx, w, { s, Rpx, lod, lens = false }) {
@@ -825,10 +849,51 @@ export function drawRivers(ctx, w, { s, Rpx, lod, lens = false }) {
   const visible = (rv, padKm) =>
     !view || !(rv.bbox[2] < view[0] - padKm || rv.bbox[0] > view[2] + padKm || rv.bbox[3] < view[1] - padKm || rv.bbox[1] > view[3] + padKm);
 
+  // Half width of a wide river at vertex k, in world units: to scale, at least WIDE_MIN_PX on screen.
+  const wideHalf = (rv, k) => Math.max(rv.wide[k], WIDE_MIN_PX / s) / 2;
+  // A wide river in three parts: the solid ribbon over the land (vertices head..tail), and the two ends over the
+  // water hexes, each with the gradient that fades it out towards its tip. Returns {body, fades: [{path, fill}]};
+  // `shores`/`bank` (Path2D) receive the waterlines and the bank ribbon of the solid part only.
+  const wideParts = (rv, shores = null, bank = null) => {
+    const p = rv.pts, last = p.length / 2 - 1;
+    const part = (i0, i1) => p.slice(i0 * 2, i1 * 2 + 2);
+    const fadesOut = rv.tail < last, fadesIn = rv.head > 0;
+    const body = new Path2D();
+    ribbon(body, part(rv.head, rv.tail), (k) => wideHalf(rv, k + rv.head), shores, fadesOut);
+    if (bank) ribbon(bank, part(rv.head, rv.tail), (k) => wideHalf(rv, k + rv.head) + Math.min(1.6, 0.4 + Rpx * 0.02) / s, null, fadesOut);
+    const fades = [];
+    const fade = (i0, i1, from, to, reverse) => {
+      const path = new Path2D();
+      const q = part(i0, i1);
+      if (reverse) for (let a = 0, b = q.length - 2; a < b; a += 2, b -= 2) {
+        [q[a], q[b]] = [q[b], q[a]];
+        [q[a + 1], q[b + 1]] = [q[b + 1], q[a + 1]];
+      }
+      const m = q.length / 2 - 1;
+      ribbon(path, q, (k) => wideHalf(rv, reverse ? i1 - k : i0 + k));
+      const g = ctx.createLinearGradient(p[from * 2], p[from * 2 + 1], p[to * 2], p[to * 2 + 1]);
+      g.addColorStop(0, WIDE_COLOR);
+      g.addColorStop(1, WIDE_COLOR_CLEAR);
+      if (m > 0) fades.push({ path, fill: g });
+    };
+    if (fadesOut) fade(rv.tail, last, rv.tail, last, false);
+    if (fadesIn) fade(0, rv.head, rv.head, 0, true); // reversed: the tip is the end of the ribbon
+    return { body, fades };
+  };
+
   if (lens) {
-    // Lens views: one quiet constant-width line, so the rivers orient without competing with the data.
+    // Lens views: one quiet constant-width line, so the rivers orient without competing with the data. A wide river
+    // keeps its ribbon and its colour: it is as much water as the lakes it joins, which keep theirs too.
     ctx.strokeStyle = "rgba(120,170,210,.45)";
     for (const rv of rivers) {
+      if (rv.wide) {
+        if (!visible(rv, rv.wmax)) continue;
+        const { body, fades } = wideParts(rv);
+        ctx.fillStyle = WIDE_COLOR;
+        ctx.fill(body);
+        for (const f of fades) { ctx.fillStyle = f.fill; ctx.fill(f.path); }
+        continue;
+      }
       if (!visible(rv, 10)) continue;
       ctx.lineWidth = mouthPx(rv.rank) * 0.8 / s;
       strokePolyline(ctx, rv.pts);
@@ -838,10 +903,20 @@ export function drawRivers(ctx, w, { s, Rpx, lod, lens = false }) {
 
   // Each river gets its own ribbons: one path for all of them would cancel where two ribbons of opposite
   // winding overlap (confluences). Banks first, then the water, then the centre lines.
-  const banks = [], bodies = [], centre = new Path2D();
-  let nCentre = 0;
+  const banks = [], bodies = [], fadeParts = [], centre = new Path2D(), shores = new Path2D();
+  let nCentre = 0, nShores = 0;
   const showCentre = atLeast(lod, "mid");
   for (const rv of rivers) {
+    if (rv.wide) {
+      if (!visible(rv, rv.wmax)) continue;
+      const bank = new Path2D();
+      const { body, fades } = wideParts(rv, shores, bank);
+      bodies.push(body);
+      banks.push(bank);
+      fadeParts.push(...fades);
+      nShores++;
+      continue;
+    }
     const Wm = mouthPx(rv.rank);
     if (!visible(rv, (Wm * 2) / s)) continue;
     const taper = Math.min(1, rv.len / 450); // short pieces keep their width
@@ -866,8 +941,15 @@ export function drawRivers(ctx, w, { s, Rpx, lod, lens = false }) {
   }
   ctx.fillStyle = "rgba(38,52,30,.42)";
   for (const P of banks) ctx.fill(P);
-  ctx.fillStyle = "#3f8cc4";
+  ctx.fillStyle = WIDE_COLOR;
   for (const P of bodies) ctx.fill(P);
+  for (const f of fadeParts) { ctx.fillStyle = f.fill; ctx.fill(f.path); }
+  if (nShores && showCentre) {
+    // A pale waterline along both banks of the wide rivers, like the shore highlight of the lakes they join.
+    ctx.strokeStyle = "rgba(196,228,244,.5)";
+    ctx.lineWidth = Math.max(0.7, Math.min(1.8, Rpx * 0.03)) / s;
+    ctx.stroke(shores);
+  }
   if (nCentre) {
     ctx.strokeStyle = "rgba(150,210,240,.55)";
     ctx.lineWidth = Math.max(0.6, Math.min(2.2, Rpx * 0.035)) / s;

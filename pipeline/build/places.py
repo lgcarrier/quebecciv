@@ -103,6 +103,8 @@ def build() -> None:
             mx, my = w["csd_point"][str(k)]
             cell = grid.cell_at(mx, my)
             tgt = nearest_owned(grid, owner, cell)
+            if tgt < 0:  # (hexpop[-1] would silently put its people on the last hex of the grid)
+                raise ValueError(f"SDR {uid} : aucun hexagone du Québec près de son centre (cellule {cell})")
             if tgt != cell and p["pop2021"]:
                 other_sdr[0] += 1
                 other_names.append(f"{p['name']} ({p['pop2021']})")

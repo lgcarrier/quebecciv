@@ -38,7 +38,10 @@ async function loadJSON(name, optional = false) {
 
 // Optional data files (docs/DATA_CONTRACTS.md). Small map-layer files are fetched right after the first frame; the
 // others only when something asks for them (app.loadData(name)). A missing file (404) loads as null.
-const EAGER_DATA = ["infrastructure", "wonders"];
+// The Québec pipeline builds none of the engine's eager files yet ("infrastructure", "wonders") nor resources.json:
+// they are not requested, so a page load logs no 404. List a file here (or in HAS_RESOURCES) once a builder writes it.
+const EAGER_DATA = [];
+const HAS_RESOURCES = false;
 const DATA_NAME = /^[a-z0-9_-]+(\/[a-z0-9_-]+)?$/; // a file of web/data, or of one folder in it
 
 // render/snapshot.js draws a whole view into any canvas; optional, with a local fallback.
@@ -55,7 +58,8 @@ const isMobile = () => matchMedia("(max-width: 700px)").matches;
 async function main() {
   const [world, cities, nation, lenses, sources, resources, statesData] = await Promise.all([
     loadJSON("world"), loadJSON("cities"), loadJSON("nation"),
-    loadJSON("lenses", true), loadJSON("sources", true), loadJSON("resources", true), loadJSON("states", true),
+    loadJSON("lenses", true), loadJSON("sources", true), HAS_RESOURCES ? loadJSON("resources", true) : null,
+    loadJSON("states", true),
   ]);
   const lensFile = lenses && Array.isArray(lenses.lenses) ? lenses : { vintage: "", groups: [], lenses: [] };
   const w = prepareWorld(world, cities, { resources });
@@ -806,7 +810,8 @@ async function main() {
     const name = t.toLowerCase().replace(/[_+]/g, " ");
     return w.raw.states.findIndex((st, i) => (states?.[i]?.name || st.name || "").toLowerCase() === name);
   }
-  // at = [x km, y km, log2(scale / home-fit scale)]; during a flight, where it will land; null at the home view.
+  // at = [x, y, log2(scale / home-fit scale)], x and y in map units (5 per km, world.json km_per_unit); during a
+  // flight, where it will land; null at the home view.
   const cameraAt = () => (userMoved ? (cam.flight ? [cam.flight.x1, cam.flight.y1, Math.log2(cam.flight.s1 / fitScale())]
     : [cam.x, cam.y, Math.log2(cam.scale / fitScale())]) : null);
   let stateHashRef = null; // {idx, raw}: the form of the #state value the current selection came from

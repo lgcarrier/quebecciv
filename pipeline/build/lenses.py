@@ -3,12 +3,15 @@
 * `density` : habitants par km² de terre, par hexagone (population des SDR répartie au prorata de leur superficie,
   voir places.py ; superficie terrestre de l'hexagone = sa part de points dans une SDR × 65 km²) ;
 * `growth` : variation de la population 2016-2021, par hexagone (mêmes répartitions, SDR qui ont les deux chiffres ;
-  null sous GROWTH_MIN_POP habitants en 2016 pour ne pas colorer des variations sur une poignée de personnes)."""
+  null sous GROWTH_MIN_POP habitants en 2016 pour ne pas colorer des variations sur une poignée de personnes) ;
+* `forest`, `farmland`, `wetland`, `developed` : part des points de la couverture du sol du Canada 2020 (RNCan) de
+  l'hexagone dans un groupe de classes (voir core/landcover.py), eau comprise dans le total."""
 
 from __future__ import annotations
 
 import math
 
+from ..core import landcover
 from ..core.quebec import HEX_RADIUS_KM
 from ..core.store import load_interim, write_web
 
@@ -18,6 +21,27 @@ PRODUCES = ["lenses.json"]
 GROWTH_MIN_POP = 50
 MIN_LAND_SHARE = 0.1  # une cellule côtière compte au moins 10 % de terre (évite des densités absurdes)
 HEX_KM2 = 3 * math.sqrt(3) / 2 * HEX_RADIUS_KM ** 2
+
+
+COVER_LENSES = [
+    {"id": "forest", "name": "Forêt", "icon": "l-forest", "groups": ["forest"],
+     "ramp": ["#f3efe0", "#d4e2b4", "#9cc47f", "#5f9a55", "#2f6b3a", "#173f25"],
+     "description": "Part des points de l'hexagone en forêt : conifères, taïga, feuillus et forêt mixte (classes "
+     "NALCMS 1, 2, 5 et 6 de la couverture du sol du Canada 2020). L'eau compte dans le total. Les coupes et brûlis "
+     "qui se reboisent sont classés en arbustaie, donc hors de la forêt."},
+    {"id": "farmland", "name": "Terres agricoles", "icon": "l-farmland", "groups": ["crop"],
+     "ramp": ["#f5f1e6", "#efdcae", "#e3bf74", "#cf9a3f", "#a8701f", "#6f4410"],
+     "description": "Part des points de l'hexagone en terre cultivée (classe NALCMS 15). Les prairies et pâturages "
+     "(classe 10, prairie) n'en font pas partie : la classe ne distingue pas le foin d'une prairie naturelle."},
+    {"id": "wetland", "name": "Milieux humides", "icon": "l-wetland", "groups": ["wetland"],
+     "ramp": ["#f2f1ea", "#cfe3dc", "#94c6b6", "#5a9f8c", "#2f7564", "#174a3e"],
+     "description": "Part des points de l'hexagone en milieu humide (classe NALCMS 14 : tourbières, marais, "
+     "marécages). À 30 m, les petits milieux humides boisés passent souvent pour de la forêt."},
+    {"id": "developed", "name": "Bâti", "icon": "l-developed", "groups": ["developed"],
+     "ramp": ["#f3f1ee", "#e3d6d0", "#cfa99b", "#b8735f", "#93402f", "#5c1a12"],
+     "description": "Part des points de l'hexagone en milieu urbain et bâti (classe NALCMS 17 : surfaces "
+     "imperméables, bâtiments, routes)."},
+]
 
 
 def round2(v, up):
@@ -75,11 +99,26 @@ def build() -> None:
          "Canada). Les réserves sans chiffre publié sont exclues.",
          "file": "lenses/growth"},
     ]
-    for lens, vals in ((lenses[0], density), (lenses[1], growth)):
-        write_web(f"lenses/{lens['id']}.json", {"id": lens["id"], "values": vals})
+    values = {"density": density, "growth": growth}
+    cover = {int(c): {int(k): v for k, v in cnt.items()} for c, cnt in w["cover_counts"].items()}
+    for spec in COVER_LENSES:
+        vals = [None] * n
+        for c, cnt in cover.items():
+            gs = landcover.group_shares(cnt)
+            vals[c] = round(sum(gs[g] for g in spec["groups"]), 3)
+        values[spec["id"]] = vals
+        lenses.append({
+            "id": spec["id"], "group": "land", "name": spec["name"], "icon": spec["icon"],
+            "unit": "part de la superficie de l'hexagone", "format": "pct", "scale": "linear", "domain": [0, 1],
+            "ramp": spec["ramp"], "higher_is": "neutral", "source": "nrcan_landcover",
+            "note": "Couverture du sol du Canada 2020 (RNCan, 30 m), un point tous les 480 m.",
+            "description": spec["description"], "file": f"lenses/{spec['id']}"})
+    for lens in lenses:
+        write_web(f"lenses/{lens['id']}.json", {"id": lens["id"], "values": values[lens["id"]]})
     write_web("lenses.json", {
-        "vintage": "Statistique Canada, Recensement de 2021 (et 2016)",
-        "groups": [{"id": "people", "name": "Population"}],
+        "vintage": "Statistique Canada, Recensement de 2021 (et 2016) ; RNCan, couverture du sol du Canada 2020",
+        "groups": [{"id": "people", "name": "Population"}, {"id": "land", "name": "Territoire"}],
         "lenses": lenses,
     })
-    print(f"    density domain {lenses[0]['domain']}, growth domain {lenses[1]['domain']}")
+    print(f"    density domain {lenses[0]['domain']}, growth domain {lenses[1]['domain']}; "
+          f"cover lenses {[sp['id'] for sp in COVER_LENSES]}")

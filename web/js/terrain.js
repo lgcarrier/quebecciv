@@ -35,13 +35,16 @@ export const DEFAULT_TABLES = {
     { id: 9, key: "urban", name: "Bâti", color: "#8c8780" },
     { id: 10, key: "barren", name: "Roc et sable", color: "#b9ab94" },
     { id: 11, key: "ice", name: "Glaciers et neige", color: "#e8eef2" },
+    { id: 12, key: "taiga", name: "Taïga", color: "#6f7f52" },
+    { id: 13, key: "tundra", name: "Toundra", color: "#a3a47c" },
+    { id: 14, key: "shrubland", name: "Arbustaie", color: "#8f8a4e" },
   ],
 };
 
 // Cover ids (fixed by the data contract).
 export const COVER = {
   NONE: 0, DECIDUOUS: 1, EVERGREEN: 2, MIXED: 3, SCRUB: 4, GRASS: 5, PASTURE: 6, CROP: 7, WETLAND: 8, URBAN: 9,
-  BARREN: 10, ICE: 11,
+  BARREN: 10, ICE: 11, TAIGA: 12, TUNDRA: 13, SHRUBLAND: 14, // 12 à 14 : couverture du sol du Canada (Québec)
 };
 
 // Merge the file's tables over the defaults (by id), so a missing colour or name never breaks rendering.

@@ -16,6 +16,12 @@ and sources skip their discovery requests ("is there a newer year?") and use the
 newest cached release instead. 'fetch' then only checks that every needed raw file
 is cached, listing the sources that are incomplete, so 'all --offline' fails
 before processing anything when a file is missing. (--force can't be combined.)
+
+--light: leave out the optional sources (nrcan_landcover, a 2.1 GB download) when no
+source is named: fetch skips them, process skips those that were never downloaded, and
+the builders do without their interim. The map is then built WITHOUT land cover (the
+land is coloured by elevation and the land lenses are left out): fine for working on
+the rest of the map, not for committing web/data.
 """
 
 from __future__ import annotations
@@ -47,11 +53,24 @@ def _pick(names, registry, kind):
     return names
 
 
-def cmd_fetch(names, force=False):
+def _without_optional(ids, names, light, keep=lambda sid: False):
+    """`ids` minus the optional sources under --light (only when no source was named; `keep(sid)` spares one)."""
+    if not light or names:
+        return ids
+    out = []
+    for sid in ids:
+        if BY_ID[sid].optional and not keep(sid):
+            print(f"[--light] {sid}: optional source left out")
+        else:
+            out.append(sid)
+    return out
+
+
+def cmd_fetch(names, force=False, light=False):
     if fetch.OFFLINE and force:
         sys.exit("--force re-downloads, which --offline forbids")
     missing = []
-    for sid in _pick(names, BY_ID, "source"):
+    for sid in _without_optional(_pick(names, BY_ID, "source"), names, light):
         print(f"[fetch] {sid}{' (--offline: checking the cache)' if fetch.OFFLINE else ''}")
         if not fetch.OFFLINE:
             BY_ID[sid].fetch(force=force)
@@ -83,8 +102,10 @@ def _process_order(ids: list[str]) -> list[str]:
     return order
 
 
-def cmd_process(names):
-    for sid in _process_order(_pick(names, BY_ID, "source")):
+def cmd_process(names, light=False):
+    # Under --light an optional source is still processed when its raw files are already here.
+    ids = _without_optional(_pick(names, BY_ID, "source"), names, light, keep=lambda sid: bool(fetch.read_manifest(sid)))
+    for sid in _process_order(ids):
         t = time.time()
         print(f"[process] {sid}")
         data = BY_ID[sid].process()
@@ -138,13 +159,15 @@ def helper_files(module_file: Path, seen: set[Path] | None = None) -> set[Path]:
 
 
 def is_stale(mod: ModuleType) -> bool:
-    """True unless every PRODUCES output exists and is newer than all REQUIRES interims and the code."""
+    """True unless every PRODUCES output exists and is newer than all REQUIRES interims, the OPTIONAL interims that
+    exist, and the code."""
     outs = [output_path(p) for p in mod.PRODUCES]
     if not outs or not all(p.exists() for p in outs):
         return True
     inputs = [output_path(r) for r in getattr(mod, "REQUIRES", [])]
     if not all(p.exists() for p in inputs):
         return True  # let build() fail with its own clear message
+    inputs += [p for p in (output_path(r) for r in getattr(mod, "OPTIONAL", [])) if p.exists()]
     inputs += helper_files(Path(mod.__file__))
     return max((p.stat().st_mtime for p in inputs), default=0) >= min(p.stat().st_mtime for p in outs)
 
@@ -171,10 +194,11 @@ def cmd_check() -> int:
 def cmd_list():
     print("sources:")
     for s in SOURCES:
-        print(f"  {s.id:20} {s.info.title}")
+        print(f"  {s.id:20} {s.info.title}{' (optional: --light leaves it out)' if s.optional else ''}")
     print("builders (in order):")
     for name, mod in BUILDERS.items():
-        print(f"  {name:20} needs {', '.join(mod.REQUIRES) or '-'}")
+        opt = getattr(mod, "OPTIONAL", [])
+        print(f"  {name:20} needs {', '.join(mod.REQUIRES) or '-'}{'; optional: ' + ', '.join(opt) if opt else ''}")
 
 
 # Self-unregistering service worker, served at /sw.js by the dev server only. quebecciv has no service worker, but
@@ -236,20 +260,22 @@ def main(argv=None):
     p.add_argument("--force", action="store_true", help="fetch: re-download even if cached; build: rebuild even if up to date")
     p.add_argument("--deps", action="store_true", help="build: also run upstream builders of the named ones")
     p.add_argument("--offline", action="store_true", help="use cached downloads only; never touch the network")
+    p.add_argument("--light", action="store_true",
+                   help="fetch/process/all: leave out the optional sources (the 2.1 GB land cover); no land cover on the map")
     p.add_argument("--port", type=int, default=8765)
     a = p.parse_args(argv)
     fetch.OFFLINE = a.offline
     if a.command == "fetch":
-        cmd_fetch(a.names, a.force)
+        cmd_fetch(a.names, a.force, a.light)
     elif a.command == "process":
-        cmd_process(a.names)
+        cmd_process(a.names, a.light)
     elif a.command == "build":
         cmd_build(a.names, a.force, a.deps)
     elif a.command == "check":
         sys.exit(cmd_check())
     elif a.command == "all":
-        cmd_fetch([], a.force)
-        cmd_process([])
+        cmd_fetch([], a.force, a.light)
+        cmd_process([], a.light)
         cmd_build([], a.force)
         if cmd_check():  # WARNs are reported but don't fail the run; FAILs do
             sys.exit(1)

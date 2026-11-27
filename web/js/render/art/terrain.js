@@ -160,7 +160,8 @@ function texFamily(w, i) {
   if (cv === COVER.ICE) return "snow";
   if (rel >= 2) return rel === 3 || w.raw.elev[i] > 2600 ? "snowrock" : "rock";
   switch (cv) {
-    case COVER.DECIDUOUS: case COVER.EVERGREEN: case COVER.MIXED: return "canopy";
+    case COVER.DECIDUOUS: case COVER.EVERGREEN: case COVER.MIXED: case COVER.TAIGA: return "canopy";
+    case COVER.TUNDRA: return "rock";
     case COVER.SCRUB: return "sand";
     case COVER.WETLAND: return "marsh";
     case COVER.URBAN: return "grass";
@@ -679,7 +680,7 @@ function planCell(env, i) {
     return;
   }
 
-  const isForest = cv === COVER.DECIDUOUS || cv === COVER.EVERGREEN || cv === COVER.MIXED;
+  const isForest = cv === COVER.DECIDUOUS || cv === COVER.EVERGREEN || cv === COVER.MIXED || cv === COVER.TAIGA;
   const forestPct = w.pct?.forest ? w.pct.forest[i] || 0 : isForest ? 70 : 0;
   const desert = cv === COVER.SCRUB || cv === COVER.BARREN;
   // Snow from absolute height: the highest sample in the hex (world.json elev_max) catches ranges like the Sierra
@@ -723,7 +724,7 @@ function planCell(env, i) {
   if (isForest && forestPct >= 20 && !onHill) {
     const d = forestPct / 100;
     const n = lod === "far" ? (d >= 0.45 ? 1 : 0) : lod === "mid" ? (d >= 0.6 ? 3 : 2) : lod === "near" ? (d >= 0.6 ? 4 : d >= 0.4 ? 3 : 2) : d >= 0.6 ? 5 : 3;
-    const kind = cv === COVER.DECIDUOUS ? "decid" : cv === COVER.EVERGREEN ? (elev > 2200 ? "conifsnow" : "conif") : "mixed";
+    const kind = cv === COVER.DECIDUOUS ? "decid" : cv === COVER.EVERGREEN || cv === COVER.TAIGA ? (elev > 2200 ? "conifsnow" : "conif") : "mixed";
     const L = CLUMPS[n] || [];
     const f = lod === "far" ? 1.3 : 1;
     L.forEach(([px, py], k) => up("clump", kind, vary(20 + k, 8), px + (h(30 + k) - 0.5) * 0.1, py + (h(40 + k) - 0.5) * 0.06, f * (0.88 + h(50 + k) * 0.22)));
@@ -919,7 +920,7 @@ function planHills(c) {
  */
 function planWoodedHills(c) {
   const { w, i, h, vary, up, cv, elev, isForest, forestPct, lod, bridges } = c;
-  const conif = cv === COVER.EVERGREEN || (!isForest && (cv === COVER.SCRUB || elev > 1500));
+  const conif = cv === COVER.EVERGREEN || cv === COVER.TAIGA || (!isForest && (cv === COVER.SCRUB || elev > 1500));
   const mixed = cv === COVER.MIXED;
   const base = (w.coverRGB && w.coverRGB[cv]) || [96, 120, 64];
   const tone = `${cv}.${mix(base, [134, 124, 78], 0.5).map((q) => q | 0).join(".")}`;

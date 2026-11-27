@@ -117,12 +117,14 @@ export const isCapital = (city) => (city.capital != null ? !!city.capital : city
 
 // --- tile colours ---------------------------------------------------------------------------------------------
 
-function landRGB(w, i) {
+export function landRGB(w, i) {
   const { elev } = w.raw;
   const cv = w.cover[i];
   let c = cv > 0 && w.coverRGB[cv] ? w.coverRGB[cv] : elevColor(elev[i]);
   if (cv > 0 && w.pct) {
-    // Blend a little of the cell's mixture, so a farm cell with 40% forest reads greener than a pure one.
+    // Blend a little of the cell's mixture, so a farm cell with 40% forest reads greener than a pure one. The blend
+    // is weighted by the share of the cell the known groups cover (pct values are in %): world.json may carry only
+    // some groups (quebecciv: forest alone), and a cell with 1% forest must not be tinted like a cell with 100%.
     let tot = 0, r = 0, g = 0, b = 0;
     for (const [key, id] of Object.entries(PCT_COVER)) {
       const p = w.pct[key]?.[i] || 0;
@@ -130,7 +132,7 @@ function landRGB(w, i) {
       if (!p || !col) continue;
       tot += p; r += col[0] * p; g += col[1] * p; b += col[2] * p;
     }
-    if (tot > 0) c = mix(c, [r / tot, g / tot, b / tot], 0.3);
+    if (tot > 0) c = mix(c, [r / tot, g / tot, b / tot], 0.3 * Math.min(1, tot / 100));
   }
   if (cv > 0) {
     // Subtle elevation tint: high country goes dustier and paler.

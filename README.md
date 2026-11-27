@@ -3,9 +3,9 @@
 Le Québec dessiné comme une carte de jeu de stratégie façon *Civilization* : un territoire en hexagones de 5 km,
 des villes, des régions et des « lentilles » de données, uniquement à partir de données publiques.
 
-> **Statut : première étape (PR 1).** La base de la carte et la population du Recensement de 2021 sont en place.
-> Les rendements, l'économie, les ressources et la couverture du sol ne sont pas encore portés : ils sont masqués
-> plutôt qu'inventés.
+> **Statut : deuxième étape (PR 2).** La base de la carte, la population du Recensement de 2021 et la couverture du
+> sol (RNCan 2020) sont en place. Les rendements, l'économie et les ressources ne sont pas encore portés : ils sont
+> masqués plutôt qu'inventés.
 
 ## Crédits
 
@@ -26,9 +26,12 @@ québécoise.
   réserves et terres réservées sous leur nom officiel.
 - **Villes** : les RMR et AR (partie québécoise d'au moins 10 000 habitants) et les municipalités de 10 000 habitants
   ou plus hors RMR et AR : 48 villes, Québec comme capitale.
-- **Lentilles** : densité de population et croissance 2016-2021.
+- **Lentilles** : densité de population et croissance 2016-2021 ; Forêt, Terres agricoles, Milieux humides et Bâti
+  (part de chaque hexagone, couverture du sol du Canada 2020).
 - **Terrain** : relief (ETOPO1), mer (contour des terres de Statistique Canada), eaux intérieures (étendues d'eau de
-  l'Atlas du Canada au 1:1 000 000 : fleuve, grandes rivières, lacs), tracé des rivières (Natural Earth).
+  l'Atlas du Canada au 1:1 000 000 : fleuve, grandes rivières, lacs), tracé des rivières (Natural Earth), couverture
+  du sol (classe dominante de chaque hexagone : conifères, taïga, feuillus, forêt mixte, arbustaie, toundra, prairie,
+  terres cultivées, milieux humides, bâti, roc, neige et glace).
 
 Population du Québec au Recensement de 2021 : **8 501 833** habitants. La somme des SDR, la somme des 17 régions et la
 somme des hexagones sont vérifiées égales à ce total officiel (`python -m pipeline check` et les tests).
@@ -42,6 +45,7 @@ somme des hexagones sont vérifiées égales à ce total officiel (`python -m pi
 | Natural Earth 1:10m v5.1.2 | Lacs, rivières, contour des États-Unis | Domaine public |
 | NOAA ETOPO1 (par ERDDAP) | Relief, profondeur de la mer | Domaine public (gouvernement des États-Unis) |
 | Ressources naturelles Canada, Atlas du Canada 1:1 000 000 : étendues d'eau et îles | Fleuve, rivières larges, lacs (eau à l'intérieur des municipalités) | Licence du gouvernement ouvert – Canada |
+| Ressources naturelles Canada, couverture du sol du Canada 2020 (30 m, GeoTIFF de 2,1 Go) | Couverture du sol des hexagones, lentilles du territoire | Licence du gouvernement ouvert – Canada |
 
 Chaque source a son module dans `pipeline/sources/` et sa provenance (URL, date, sha256) dans
 `web/data/sources.json`, que l'Almanach affiche avec sa licence.
@@ -69,6 +73,15 @@ Chaque source a son module dans `pipeline/sources/` et sa provenance (URL, date,
 - L'eau de l'estuaire et du golfe est classée « côte » ou « mer » (reliée au bord de la carte) ; les eaux intérieures,
   « lac ».
 - La frontière Québec – Labrador est celle des fichiers de Statistique Canada.
+- Couverture du sol : un point tous les 480 m (un pixel sur huit de l'aperçu à 60 m inclus dans le GeoTIFF de 30 m),
+  environ 280 points par hexagone. La couleur est la classe de terre dominante ; les lentilles donnent la part des
+  points dans un groupe de classes, eau comprise dans le total. Exactitude globale annoncée par RNCan : 86,9 %.
+- Ordre de grandeur vérifié : la forêt (classes NALCMS 1, 2, 5, 6) couvre 50 % des points des hexagones du Québec,
+  environ 730 000 km², contre « plus de 901 503 km² » (59,6 % du milieu terrestre) dans les *Chiffres-clés du Québec
+  forestier – Édition 2026* du MRNF. L'écart vient des définitions (le MRNF compte les coupes et brûlis en
+  régénération, classés ici en arbustaie) et des hexagones d'eau, exclus.
+- Pas de rendements (nourriture, production) : aucune formule tirée de la couverture du sol ne serait assez
+  transparente ni vérifiable ; ils restent masqués.
 
 ## Lancer le projet
 
@@ -76,16 +89,19 @@ Python 3.11 ou plus, bibliothèque standard seulement ; [uv](https://docs.astral
 
 ```sh
 uv run python -m pipeline all      # télécharge (data/raw), traite (data/interim) et bâtit web/data
+uv run python -m pipeline all --light  # sans le GeoTIFF de 2,1 Go : carte sans couverture du sol (à ne pas publier)
 uv run python -m pipeline check    # vérifie web/data
 uv run python -m unittest discover tests
 uv run python -m pipeline serve    # http://127.0.0.1:8765
 ```
 
-`data/raw/` et `data/interim/` ne sont pas versionnés ; `web/data/` l'est (environ 2,2 Mo). Aucune clé, aucun
+`data/raw/` et `data/interim/` ne sont pas versionnés ; `web/data/` l'est (environ 3,4 Mo, dont 1,6 Mo de lentilles
+chargées à la demande). Le premier `pipeline fetch` télécharge le GeoTIFF de la couverture du sol (2,1 Go) ; son
+traitement (lecteur GeoTIFF en bibliothèque standard, `pipeline/core/geotiff.py`) prend environ 40 s. Aucune clé, aucun
 compte, aucun service payant.
 
 ## Pas encore porté
 
-Rendements et économie, emploi et revenus, ressources, couverture du sol (prévu : Ressources naturelles Canada),
+Rendements et économie, emploi et revenus, ressources,
 routes et chemins de fer, conseillers, classements, vue de ville, défi quotidien. Voir
 [docs/DATA_CONTRACTS.md](docs/DATA_CONTRACTS.md) pour le format des fichiers.

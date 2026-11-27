@@ -21,14 +21,17 @@ import math
 import statistics
 from collections import Counter, defaultdict, deque
 
+from ..core import landcover
 from ..core import rivers as wide
 from ..core.geo import MapProjection
 from ..core.hexgrid import HexGrid
 from ..core.quebec import (BBOX, CSD_TYPES, HEX_RADIUS_UNITS, MARGIN_UNITS, PRUID, REGIONS, SCALE)
 from ..core.raster import Raster
 from ..core.store import load_interim, save_interim, write_web
+from ..sources.atlas_water import LambertConformalConic
 
 REQUIRES = ["statcan_boundaries", "natural_earth", "etopo", "atlas_water"]
+OPTIONAL = ["nrcan_landcover"]  # a 2.1 GB download: without its interim the map is built with no land cover
 PRODUCES = ["world.json", "_world"]
 
 RASTER_KM = 0.5
@@ -90,10 +93,11 @@ RELIEF_TABLE = [
 ]
 RELIEF_NOTE = ("Des points ETOPO1 (un toutes les deux minutes d'arc, une dizaine par hexagone) à -100 m ou plus ; "
                "tous les points s'il n'y en a aucun. Les hexagones d'eau sont toujours plats.")
-COVER_TABLE = [{"id": 0, "key": "none", "name": "Non disponible", "rule": "Pas encore de couverture du sol : la "
-                "couleur de la terre suit l'altitude."}]
-COVER_NOTE = ("La couverture du sol (forêt, cultures, milieux humides…) n'est pas encore intégrée : la terre est "
-              "colorée selon l'altitude. Source prévue : la couverture du sol du Canada de RNCan (30 m).")
+COVER_NOTE = ("Couverture du sol du Canada 2020 de RNCan (30 m, images Landsat 2019-2021, classes NALCMS), un point "
+              "tous les 480 m (environ 280 par hexagone). La couleur d'un hexagone est sa classe de terre dominante "
+              "(eau exclue) ; les lentilles Forêt, Terres agricoles, Milieux humides et Bâti donnent la part de ses "
+              "points dans chaque groupe de classes. Les hexagones des États-Unis, hors des données, sont colorés "
+              "selon l'altitude.")
 
 # Noms de mers et de reliefs écrits sur la carte : (nom, type, lon, lat, hauteur de police en km, angle).
 # Les positions des étendues d'eau sont vérifiées au build (elles doivent tomber sur un hexagone d'eau).
@@ -539,6 +543,33 @@ def build() -> None:
         features.append({"name": name, "kind": kind, "x": round(x, 1), "y": round(y, 1),
                          "size": round(fkm * SCALE, 1), "angle": ang})
 
+    # --- land cover (RNCan 2020) ------------------------------------------------------------------------------------
+    lcc = LambertConformalConic()
+
+    def lc_to_map(x, y):
+        return proj(*lcc.inverse(x, y))
+
+    try:
+        lc_points = landcover.LandcoverPoints(load_interim("nrcan_landcover"))
+    except FileNotFoundError:
+        lc_points = None  # optional source (see OPTIONAL): `pipeline --light`, or never fetched
+    cover_counts = landcover.hex_counts(lc_points, lc_to_map, grid.cell_at) if lc_points else {}
+    cover = [0] * grid.size
+    forest_pct = [0] * grid.size  # share of the hex in forest (%), for the density of the trees drawn
+    for c, cnt in cover_counts.items():
+        if not is_water[c]:
+            cover[c] = landcover.dominant_cover(cnt)
+            forest_pct[c] = round(100 * landcover.group_shares(cnt)["forest"])
+    qc_cover = {c: cnt for c, cnt in cover_counts.items() if owner[c] >= 0}
+    no_cover = sum(1 for i in range(grid.size) if owner[i] >= 0 and i not in qc_cover)
+    if lc_points:
+        print(f"    land cover: {len(cover_counts)} hexes with points, {no_cover} Québec hexes without; "
+              f"{sum(sum(v.values()) for v in qc_cover.values()) / max(1, len(qc_cover)):.0f} points per Québec hex")
+    else:
+        print("    ! land cover: interim 'nrcan_landcover' missing – the map is built WITHOUT land cover (land coloured "
+              "by elevation, no land lenses). Do not commit web/data from this build; for the full map run: "
+              "uv run python -m pipeline fetch nrcan_landcover && uv run python -m pipeline process nrcan_landcover")
+
     n_qc = sum(1 for o in owner if o >= 0)
     print(f"    {n_qc} hexes in Québec, {sum(1 for o in owner if o == FOREIGN)} neighbour land, "
           f"{sum(1 for w in water if w)} water ({sum(1 for w in water if w == LAKE)} lake); {no_elev} without elevation; "
@@ -557,10 +588,12 @@ def build() -> None:
         "elev_max": elev_max,
         "water": water,
         "relief": relief,
-        "cover": [0] * grid.size,
-        "pct": None,
-        "tables": {"water": WATER_TABLE, "relief": RELIEF_TABLE, "cover": COVER_TABLE,
-                   "notes": {"water": WATER_NOTE, "relief": RELIEF_NOTE, "cover": COVER_NOTE}},
+        "cover": cover,
+        "pct": {"forest": forest_pct} if lc_points else None,
+        "tables": {"water": WATER_TABLE, "relief": RELIEF_TABLE,
+                   "cover": landcover.COVER_TABLE if lc_points else landcover.NO_COVER_TABLE,
+                   "notes": {"water": WATER_NOTE, "relief": RELIEF_NOTE,
+                             "cover": COVER_NOTE if lc_points else landcover.NO_COVER_NOTE}},
         "states": states,
         "counties": [{"geoid": c["uid"], "name": c["name"]} for c in cds],
         "rivers": rivers,
@@ -584,4 +617,5 @@ def build() -> None:
         "csd_point": {str(k): v for k, v in csd_point.items()},
         "land_samples": land_samples,
         "samples_per_cell": ns,
+        "cover_counts": {str(c): {str(k): n for k, n in sorted(cnt.items())} for c, cnt in sorted(qc_cover.items())},
     })

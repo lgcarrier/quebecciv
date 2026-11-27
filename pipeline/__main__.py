@@ -177,16 +177,54 @@ def cmd_list():
         print(f"  {name:20} needs {', '.join(mod.REQUIRES) or '-'}")
 
 
-class _DevHandler(http.server.SimpleHTTPRequestHandler):
-    """Static files of web/ (no API: the daily challenge is not part of quebecciv yet)."""
+# Self-unregistering service worker, served at /sw.js by the dev server only. quebecciv has no service worker, but
+# other local apps served earlier on the same origin (http://127.0.0.1:8765) may have left one registered at scope
+# "/" (several projects on this machine register ./sw.js). Such a worker keeps intercepting quebecciv's requests until
+# a hard reload (Ctrl+Maj+R) bypasses it. The browser re-fetches the worker's script on navigation; it gets this one,
+# which unregisters itself and reloads its pages.
+KILL_SW = b"""self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  await self.registration.unregister();
+  for (const c of await self.clients.matchAll({ type: "window" })) c.navigate(c.url);
+})()));
+"""
 
+
+class _DevHandler(http.server.SimpleHTTPRequestHandler):
+    """Static files of web/ (no API: the daily challenge is not part of quebecciv yet).
+
+    * Cache-Control: no-cache on every response, so the browser revalidates (If-Modified-Since → 304) instead of
+      reusing a stale heuristic-cached module or stylesheet after a rebuild or after another app on the same port.
+    * HTTP/1.1 keep-alive: the ~50 ES modules reuse a few connections instead of opening one each.
+    * /sw.js answers with KILL_SW (see above)."""
+
+    protocol_version = "HTTP/1.1"
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript",
                       ".json": "application/json"}
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
+    def do_GET(self):
+        if urllib.parse.urlsplit(self.path).path == "/sw.js":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript")
+            self.send_header("Content-Length", str(len(KILL_SW)))
+            self.end_headers()
+            self.wfile.write(KILL_SW)
+            return
+        super().do_GET()
+
+
+class _DevServer(http.server.ThreadingHTTPServer):
+    request_queue_size = 128  # socketserver's default listen backlog is 5
+    daemon_threads = True
 
 
 def cmd_serve(port=8765):
     handler = functools.partial(_DevHandler, directory=str(WEB))
-    with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as srv:
+    with _DevServer(("127.0.0.1", port), handler) as srv:
         print(f"serving web/ at http://127.0.0.1:{port}")
         srv.serve_forever()
 

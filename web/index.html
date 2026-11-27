@@ -8,6 +8,25 @@
   <meta name="theme-color" content="#131e2a">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='31' fill='%23120d06'/%3E%3Ccircle cx='32' cy='32' r='29' fill='%23c9a45c'/%3E%3Ccircle cx='32' cy='32' r='24' fill='%232a4d8f'/%3E%3Cpath fill='%23f8f0d8' d='M32 14l4.9 11.3 12.2 1.1-9.3 8.1 2.8 12-10.6-6.4-10.6 6.4 2.8-12-9.3-8.1 12.2-1.1z'/%3E%3C/svg%3E">
   <!-- Pas encore publié : pas d'URL canonique ni de cartes sociales. -->
+  <!-- L'écran de chargement est stylé ici : il reste lisible même si la feuille de style tarde. -->
+  <style>#loading{position:fixed;inset:0;display:grid;place-items:center;z-index:50;background:#0c2238;color:#ecd08e;font:22px/1.4 Georgia,serif;letter-spacing:.2em;text-transform:uppercase;text-align:center;padding:40px}#loading.error,#loading.slow{font-size:15px;letter-spacing:0;text-transform:none}</style>
+  <script>
+    // quebecciv n'a pas de service worker. En local, un service worker laissé par une autre application servie avant
+    // sur la même origine (http://127.0.0.1:8765) intercepterait nos requêtes jusqu'à un rechargement forcé : on le
+    // désinscrit et on recharge une fois. Seulement en local, pour ne jamais toucher aux autres sites d'une origine
+    // partagée (GitHub Pages).
+    (function () {
+      var local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+      if (!local || !("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return;
+      navigator.serviceWorker.getRegistrations().then(function (regs) {
+        return Promise.all(regs.map(function (r) { return r.unregister(); }));
+      }).then(function () {
+        if (sessionStorage.getItem("qc-sw-reset")) return;
+        sessionStorage.setItem("qc-sw-reset", "1");
+        location.reload();
+      }).catch(function () {});
+    })();
+  </script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -69,6 +88,24 @@
   </div>
 
   <div id="loading">Arpentage du territoire…</div>
+  <script>
+    // Si le module principal ne démarre pas (erreur d'import, fichier en cache périmé), le dire au lieu de rester
+    // bloqué sur « Arpentage du territoire… ».
+    (function () {
+      function say(cls, msg) {
+        var el = document.getElementById("loading");
+        if (!el || el.classList.contains("error")) return;
+        el.classList.add(cls);
+        el.textContent = msg;
+      }
+      window.addEventListener("error", function (e) {
+        if (e.target && e.target.tagName === "SCRIPT") say("error", "Impossible de charger le code de la carte (" + e.target.src + "). Rechargez la page.");
+      }, true);
+      setTimeout(function () {
+        say("slow", "Le chargement est anormalement long. Rechargez la page (Ctrl+Maj+R) ; si rien ne change, ouvrez la console du navigateur.");
+      }, 15000);
+    })();
+  </script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

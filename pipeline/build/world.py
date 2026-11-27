@@ -7,7 +7,9 @@ Méthode (tout en km de la projection équivalente, core/quebec.py) :
 * chaque hexagone lit ce raster en environ 80 points d'échantillonnage répartis sur une maille de 1 km ;
 * un hexagone appartient au Québec, à un voisin ou à l'eau selon la majorité de ses points (le centre départage) ;
   sa région administrative et sa MRC sont celles de la SDR sous son centre, sinon de la SDR la plus présente ;
-* la part de chaque SDR dans chaque hexagone est gardée (interim `_world`) pour répartir la population.
+* la part de chaque SDR dans chaque hexagone est gardée (interim `_world`) pour répartir la population ;
+* le Saint-Laurent fluvial et le Saguenay, trop étroits pour des hexagones d'eau, sont tracés sur le raster et écrits
+  dans `rivers` avec leur largeur réelle (`w`, voir WIDE_RIVERS et core/rivers.py).
 
 Interim `_world` : grid, projection, owner, county, water, states (codes RÉ), counties (codes DR), csd (codes SDR),
 `csd_cells` (par SDR : [[cellule, nb de points, somme x, somme y], …]), `csd_point` (point de repli des SDR sans
@@ -16,8 +18,10 @@ point d'échantillonnage), land_samples (par cellule), samples_per_cell."""
 from __future__ import annotations
 
 import math
+import statistics
 from collections import Counter, defaultdict, deque
 
+from ..core import rivers as wide
 from ..core.geo import MapProjection
 from ..core.hexgrid import HexGrid
 from ..core.quebec import (BBOX, CSD_TYPES, HEX_RADIUS_UNITS, MARGIN_UNITS, PRUID, REGIONS, SCALE)
@@ -39,18 +43,21 @@ LAND_MIN_ALT_M = -100
 RIVER_MAX_RANK = 12  # Natural Earth scalerank (1 = le plus important)
 # Terre ou eau : un hexagone est de la terre quand au moins la moitié de ses points d'échantillonnage tombent sur
 # la terre (une SDR du Québec ou un voisin), l'eau des étendues de l'Atlas du Canada retirée. Le Saint-Laurent
-# fluvial (1 à 3 km de large) et le fjord du Saguenay sont plus étroits qu'un hexagone (8,7 km) : à la majorité, ils
-# seraient coupés. On y creuse donc un chenal minimal : la suite d'hexagones qui relie l'amont à la mer en
-# convertissant le moins de terre possible (les plus mouillés d'abord), sans jamais prendre l'hexagone de terre
-# réservé à une municipalité (voir plus bas).
-CHANNELS = [  # (nom, point d'amont lon/lat) ; l'aval est la mer reliée au bord de la carte
-    ("Saint-Laurent (lac Saint-Louis → estuaire)", -73.85, 45.40),
-    ("Saguenay (Chicoutimi → Tadoussac)", -71.06, 48.43),
+# fluvial (1 à 3 km de large) et le fjord du Saguenay sont plus étroits qu'un hexagone (8,7 km) : à la majorité, leurs
+# rives restent de la terre. Ils sont donc dessinés par-dessus les hexagones, comme des rivières à leur largeur
+# réelle (core/rivers.py) : un tracé qui suit le milieu de l'eau du raster, de l'amont jusqu'à la mer.
+# À l'île d'Orléans, le fleuve se divise : le chenal des Grands Voiliers au sud (la voie maritime) et le chenal de
+# l'Île d'Orléans au nord. Les deux sont tracés, et l'île apparaît entre eux.
+WIDE_RIVERS = [  # (nom, points de passage lon/lat depuis l'amont) ; après le dernier point, le tracé va jusqu'à la mer
+    ("Fleuve Saint-Laurent", [(-73.85, 45.40), (-70.98, 46.83)]),  # lac Saint-Louis, puis le chenal sud de l'île
+    ("Chenal de l'Île d'Orléans", [(-71.15, 46.85), (-71.03, 46.94)]),  # de la pointe ouest de l'île, par le nord
+    ("Rivière Saguenay", [(-71.06, 48.43)]),  # Chicoutimi
 ]
+WIDE_TAIL_PX = 10  # pixels du raster (5 km) : ce qu'un tronçon dessiné déborde sur les hexagones d'eau qu'il rejoint
+WIDE_MIN_KM, WIDE_MAX_KM = 0.6, 6.0  # largeur dessinée : au moins un pixel du raster, au plus un peu moins d'un hexagone
 WB_LAKE, WB_RIVER = 1, 2
 # Atlas water bodies joined to the sea (not counted as lakes). Only two pieces carry this name, both upstream of
-# Montréal (Cornwall to Lake Ontario): the river from Montréal to Québec is unnamed in the Atlas, which is why the
-# channels and river_system() decide its class below.
+# Montréal (Cornwall to Lake Ontario): the river from Montréal to Québec is unnamed in the Atlas.
 SEA_RIVERS = {"Fleuve Saint-Laurent"}
 RIVER_STEP_KM = 0.5
 
@@ -61,17 +68,20 @@ WATER_TABLE = [
     {"id": OCEAN, "name": "Mer", "color": "#1b4266", "rule": "Eau reliée au bord de la carte, plus profonde que "
      "200 m (moyenne ETOPO1) et loin de la terre."},
     {"id": COAST, "name": "Côte", "color": "#2d6d97", "rule": "Eau reliée au bord de la carte, voisine d'une terre "
-     "ou moins profonde que 200 m (moyenne ETOPO1). Le fleuve Saint-Laurent et le Saguenay en font partie."},
+     "ou moins profonde que 200 m (moyenne ETOPO1) : l'estuaire et le golfe du Saint-Laurent, les baies."},
     {"id": LAKE, "name": "Lac", "color": "#3a80b0", "rule": "Eau dont la majorité des points tombent dans un lac de "
-     "Natural Earth 1:10m, ou eau intérieure qui ne rejoint pas le bord de la carte (lacs et réservoirs)."},
+     "Natural Earth 1:10m, ou eau intérieure qui ne rejoint pas le bord de la carte (lacs et réservoirs, dont les "
+     "lacs fluviaux Saint-Louis et Saint-Pierre)."},
 ]
 WATER_NOTE = ("Les eaux intérieures (fleuve, rivières larges, lacs) viennent des étendues d'eau de l'Atlas du Canada "
               "au 1:1 000 000 : les limites de Statistique Canada les laissent dans les municipalités. Un hexagone est "
               "de la terre quand au moins la moitié de ses points tombent sur la terre. Chaque municipalité garde au "
               "moins un hexagone de terre : celui où elle a le plus de points, même s'il est surtout dans l'eau (une "
-              "île). Le Saint-Laurent fluvial et le Saguenay, plus étroits qu'un hexagone, reçoivent un chenal minimal "
-              "d'hexagones d'eau jusqu'à l'estuaire (les hexagones de terre les plus mouillés, jamais celui réservé à "
-              "une municipalité) ; ils paraissent donc plus larges qu'en réalité par endroits.")
+              "île). Le Saint-Laurent fluvial et le Saguenay, plus étroits qu'un hexagone (1 à 3 km contre 8,7 km), "
+              "ne sont pas des hexagones d'eau : ils sont dessinés par-dessus la terre, à leur largeur réelle, du lac "
+              "Saint-Louis à l'estuaire et de Chicoutimi à Tadoussac. Le tracé suit le milieu de l'eau et la largeur "
+              "est mesurée en travers, sur un raster de 500 m. À l'île d'Orléans, les deux chenaux sont dessinés. Le "
+              "survol d'un hexagone traversé par le fleuve décrit donc la terre de ses rives.")
 RELIEF_TABLE = [
     {"id": FLAT, "name": "Plat", "rule": f"Écart type de l'altitude dans l'hexagone inférieur à {HILLS_STD} m."},
     {"id": HILLS, "name": "Collines", "rule": f"Écart type de l'altitude ≥ {HILLS_STD} m."},
@@ -132,38 +142,11 @@ def components(grid, cells: set) -> list[set]:
     return res
 
 
-def channel(grid, start: int, targets: set, step_cost, blocked: set) -> list[int] | None:
-    """Cheapest chain of hexes from `start` to any hex of `targets` (Dijkstra; `step_cost(cell)` to enter a hex),
-    never through `blocked`. None when no chain exists."""
-    import heapq
-
-    dist, prev, heap = {start: 0.0}, {}, [(0.0, start)]
-    while heap:
-        d, x = heapq.heappop(heap)
-        if d > dist[x]:
-            continue
-        if x in targets:
-            out = [x]
-            while x in prev:
-                x = prev[x]
-                out.append(x)
-            return out[::-1]
-        for n in grid.neighbours(x):
-            if n in blocked:
-                continue
-            nd = d + step_cost(n)
-            if nd < dist.get(n, 1e18):
-                dist[n], prev[n] = nd, x
-                heapq.heappush(heap, (nd, n))
-    return None
-
-
-def sea_flood(grid, is_water, lake_share, through=frozenset()) -> set:
+def sea_flood(grid, is_water, lake_share) -> set:
     """Water hexes joined to the open sea: the water hexes on the edge of the map that are not lakes, and every water
-    hex reached from them through hexes that are not lakes (`lake_share` < 0.5) or that belong to `through` (the river
-    channels, which are sea whatever the Atlas calls the water under them)."""
+    hex reached from them through hexes that are not lakes (`lake_share` < 0.5)."""
     def open_water(i):
-        return is_water[i] and (lake_share[i] < 0.5 or i in through)
+        return is_water[i] and lake_share[i] < 0.5
 
     sea, q = set(), deque()
     for i in range(grid.size):
@@ -177,19 +160,6 @@ def sea_flood(grid, is_water, lake_share, through=frozenset()) -> set:
                 sea.add(j)
                 q.append(j)
     return sea
-
-
-def river_system(grid, is_water, lake_share, channel_cells) -> set:
-    """The channels plus the lake-like water hexes joined to them through lake-like hexes: the widenings of the river
-    (Lac Saint-Louis, Lac Saint-Pierre) and the reaches the Atlas leaves unnamed, which `lake_share` counts as lakes.
-    They are one body of water with the channel, so they take its class."""
-    out, q = set(channel_cells), deque(channel_cells)
-    while q:
-        for j in grid.neighbours(q.popleft()):
-            if j not in out and is_water[j] and lake_share[j] >= 0.5:
-                out.add(j)
-                q.append(j)
-    return out
 
 
 def classify_relief(mean: float, std: float) -> int:
@@ -214,6 +184,21 @@ def clip_polyline(pts, width, height):
     if cur:
         runs.append(cur)
     return [r for r in runs if len(r) >= 2]
+
+
+def split_runs(pts, keep):
+    """The runs of at least two consecutive points of `pts` whose `keep` flag is true."""
+    runs, cur = [], []
+    for p, k in zip(pts, keep):
+        if k:
+            cur.append(p)
+        else:
+            if len(cur) >= 2:
+                runs.append(cur)
+            cur = []
+    if len(cur) >= 2:
+        runs.append(cur)
+    return runs
 
 
 def simplify(pts, tol):
@@ -324,7 +309,6 @@ def build() -> None:
     county = [-1] * grid.size
     land_samples = [0] * grid.size
     lake_share = [0.0] * grid.size
-    water_share = [0.0] * grid.size  # share of the hex's sample points on water (outside land, or in an Atlas water body)
     csd_cells = defaultdict(list)  # csd index → [[cell, count, sum_ux, sum_uy]]
     best_for_csd: dict[int, tuple[int, int]] = {}
     wpx = land.w
@@ -359,7 +343,6 @@ def build() -> None:
         n_qc = sum(counts.values())
         land_samples[i] = n_qc
         lake_share[i] = n_lake / n_water if n_water else 0.0
-        water_share[i] = n_water / ns
         for k, n in counts.items():
             csd_cells[k].append([i, n, sums[k][0], sums[k][1]])
             if n > best_for_csd.get(k, (-1, 0))[1]:
@@ -380,55 +363,13 @@ def build() -> None:
             owner[i] = FOREIGN
 
     # Every SDR keeps at least one hex of Québec land: if none of its hexes is land by the majority rule (an island,
-    # a strip of shore), the hex where it has the most points becomes its land. The river channels below never take
-    # the last land hex of an SDR.
+    # a strip of shore), the hex where it has the most points becomes its land.
     forced = 0
     for k, (cell, _) in sorted(best_for_csd.items(), key=lambda kv: len(csd_cells[kv[0]])):
         if all(owner[c[0]] < 0 for c in csd_cells[k]):
             owner[cell] = csd_state[k]
             county[cell] = cd_index[csd[k]["uid"][:4]]
             forced += 1
-    # Minimal channels (see CHANNELS): from the upstream hex to the sea, converting the fewest and wettest land hexes.
-    # The sea a channel must reach is the one the water classes use below (sea_flood): water joined to the edge of the
-    # map without crossing a lake. Aiming at any water joined to the edge would let a channel stop in a lake.
-    sea_cells = sea_flood(grid, [o == WATER_CELL for o in owner], lake_share)
-
-    def step_cost(c):
-        if owner[c] == WATER_CELL:
-            return 0.01
-        return 1.0 + (1.0 - water_share[c]) + (2.0 if owner[c] == FOREIGN else 0.0)
-
-    river_hex = 0
-    channel_report = []
-    channel_cells = set()
-    for name, lon, lat in CHANNELS:
-        start = grid.cell_at(*proj(lon, lat))
-        blocked = set()  # hexes an SDR cannot lose (its only land, or the last of its land along the channel)
-        while True:
-            only = set()
-            for k, cells in csd_cells.items():
-                lc = [c[0] for c in cells if owner[c[0]] >= 0]
-                if len(lc) == 1:
-                    only.add(lc[0])
-            path = channel(grid, start, sea_cells, step_cost, (blocked | only) - {start})
-            if path is None:
-                raise ValueError(f"chenal impossible sans retirer à une municipalité sa dernière terre : {name}")
-            conv = set(c for c in path if owner[c] != WATER_CELL)
-            # An SDR whose land hexes are all on the path keeps the one where it has the most points: block it, retry.
-            lost = [k for k, cells in csd_cells.items()
-                    if any(owner[c[0]] >= 0 for c in cells) and all(owner[c[0]] < 0 or c[0] in conv for c in cells)]
-            if not lost:
-                break
-            for k in lost:
-                blocked.add(max((c for c in csd_cells[k] if c[0] in conv), key=lambda c: (c[1], -c[0]))[0])
-        for c in conv:
-            owner[c] = WATER_CELL
-            county[c] = -1
-        river_hex += len(conv)
-        channel_cells |= set(path)
-        sea_cells = sea_flood(grid, [o == WATER_CELL for o in owner], lake_share, channel_cells)
-        channel_report.append(f"{name} {len(path)} hexes, {len(conv)} land hexes made water")
-
     csd_point = {}
     for k, c in enumerate(csd):
         if k in csd_cells:
@@ -437,14 +378,12 @@ def build() -> None:
         ring = max((poly[0] for poly in csd_km[k]), key=len)
         x, y = sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring)
         csd_point[k] = to_units(x, y)
-        # …whose hex is land too, if it fell in the water (a small island or a shore village), unless it carries a
-        # river channel.
+        # …whose hex is land too, if it fell in the water (a small island or a shore village).
         cell = grid.cell_at(*csd_point[k])
-        if cell >= 0 and owner[cell] == WATER_CELL and cell not in channel_cells:
+        if cell >= 0 and owner[cell] == WATER_CELL:
             owner[cell] = csd_state[k]
             county[cell] = cd_index[csd[k]["uid"][:4]]
             forced += 1
-    print(f"    channels: {'; '.join(channel_report)}")
     print(f"    {len(offs)} samples per hex; {forced} hexes given to an SDR with no majority; "
           f"{len(csd_point)} SDR too small for any sample point")
 
@@ -493,10 +432,7 @@ def build() -> None:
     # --- water classes --------------------------------------------------------------------------------------------
     water = [LAND] * grid.size
     is_water = [o == WATER_CELL for o in owner]
-    # The channels and the river lakes joined to them are sea (class « Côte »), not lakes: the Atlas leaves the river
-    # from Montréal to Québec and the Saguenay unnamed (see SEA_RIVERS), so by name alone they would be classed as
-    # lakes, cut off from the estuary.
-    sea = sea_flood(grid, is_water, lake_share, river_system(grid, is_water, lake_share, channel_cells))
+    sea = sea_flood(grid, is_water, lake_share)
     for i in range(grid.size):
         if not is_water[i]:
             continue
@@ -507,18 +443,91 @@ def build() -> None:
         near_land = any(not is_water[j] for j in grid.neighbours(i))
         water[i] = COAST if near_land or elev[i] > COAST_DEPTH_M else OCEAN
 
-    # --- rivers ---------------------------------------------------------------------------------------------------
-    rivers = []
+    # --- rivers drawn at their true width (WIDE_RIVERS, core/rivers.py) ----------------------------------------------
+    def water_px(c, r):  # a raster pixel with no land polygon over it, or under an Atlas water body
+        if not (0 <= c < wpx and 0 <= r < land.h):
+            return False
+        k = r * wpx + c
+        return ld[k] == WATER_CELL or wbd[k] != 0
+
+    def px_km(c, r):  # km of a (fractional) pixel position; pixel centres are at integers
+        return gx0 + (c + 0.5) * RASTER_KM, gy0 - (r + 0.5) * RASTER_KM
+
+    def px_hex(c, r):
+        return grid.cell_at(*to_units(*px_km(c, r)))
+
+    def px_at(lon, lat):
+        x, y = km(lon, lat)
+        return int((x - gx0) // RASTER_KM), int((gy0 - y) // RASTER_KM)
+
+    def in_the_sea(c, r, inside=5):
+        """True a few pixels inside the sea hexes (2.5 km), so that a route ends in the water, not on its shore."""
+        return px_hex(c, r) in sea and all(
+            is_water[px_hex(c + dc, r + dr)] for dc, dr in ((inside, 0), (-inside, 0), (0, inside), (0, -inside)))
+
+    wide_rivers, wide_px, wide_report = [], set(), []
+    for name, waypoints in WIDE_RIVERS:
+        stops = [wide.nearest_water(water_px, *px_at(lon, lat)) for lon, lat in waypoints]
+        if None in stops:
+            raise ValueError(f"{name} : un point de passage n'est pas près de l'eau")
+        path = [stops[0]]
+        goals = [(lambda c, r, t=t: (c, r) == t) for t in stops[1:]] + [in_the_sea]
+        for goal in goals:
+            leg = wide.route(water_px, path[-1], goal, size=(wpx, land.h))
+            if leg is None:
+                raise ValueError(f"{name} : aucun tracé jusqu'à la mer")
+            path += leg[1:]
+        # …and a few km further out to sea: the browser fades the end of the ribbon out over the water (the shore it
+        # draws is rounded, up to a third of a hex away from the hex edges), which needs some length.
+        c0, r0 = path[-1]
+        leg = wide.route(water_px, path[-1], size=(wpx, land.h),
+                         goal=lambda c, r: px_hex(c, r) in sea and max(abs(c - c0), abs(r - r0)) >= WIDE_TAIL_PX)
+        path += leg[1:] if leg else []
+        dry = sum(1 for c, r in path if not water_px(c, r))
+        sections = wide.cross_sections(water_px, path)
+        cs = wide.running([x for x, _, _ in sections], 4, statistics.fmean)
+        rs = wide.running([y for _, y, _ in sections], 4, statistics.fmean)
+        ws = wide.running(wide.running([w for _, _, w in sections], 4, statistics.median), 6, statistics.fmean)
+        # Drawn where the route crosses land hexes; a stretch another wide river already covers is left to it.
+        # (The hex is that of the centre line, which is what is drawn, not that of the route's pixel.)
+        on_land = [not is_water[px_hex(cs[k], rs[k])] and p not in wide_px for k, p in enumerate(path)]
+        pieces = []
+        for a, b in wide.land_runs(on_land, overlap=WIDE_TAIL_PX):
+            pts = [to_units(*px_km(cs[k], rs[k])) for k in range(a, b)]
+            wkm = [min(WIDE_MAX_KM, max(WIDE_MIN_KM, ws[k] * RASTER_KM)) for k in range(a, b)]
+            keep = wide.simplify(pts, 0.2 * SCALE)
+            pts, wkm = wide.smooth([pts[k] for k in keep], [wkm[k] for k in keep], passes=2)
+            pts = clip_polyline(pts, width, height)
+            if len(pts) != 1 or len(pts[0]) != len(wkm):
+                raise ValueError(f"{name} : le tracé sort de la carte")
+            wide_rivers.append({"name": name, "rank": 1, "pts": [round(v, 1) for q in pts[0] for v in q],
+                                "w": [round(v * SCALE, 1) for v in wkm]})
+            pieces.append(f"{(b - a) * RASTER_KM:.0f} km wide {min(wkm):.1f}–{max(wkm):.1f} km")
+        for c, r in path:  # the route and its neighbours, for the rivers that follow
+            wide_px.update((c + dc, r + dr) for dc in (-2, -1, 0, 1, 2) for dr in (-2, -1, 0, 1, 2))
+        wide_report.append(f"{name}: route {len(path) * RASTER_KM:.0f} km ({dry} px over land), drawn {'; '.join(pieces) or 'nowhere'}")
+    for line in wide_report:
+        print(f"    {line}")
+
+    # --- rivers (Natural Earth centre lines) ----------------------------------------------------------------------
+    # A Natural Earth line that runs along a wide river is the same river: its vertices on the wide river's route are
+    # dropped (the thin line would wander in and out of the ribbon). Tributaries only touch the route at their mouth.
+    def on_wide(x, y):
+        xk, yk = to_km(x, y)
+        return (int((xk - gx0) // RASTER_KM), int((gy0 - yk) // RASTER_KM)) in wide_px
+
+    rivers = list(wide_rivers)
     for r in ne["rivers"]:
         if r["rank"] is None or r["rank"] > RIVER_MAX_RANK:
             continue
         for line in r["lines"]:
             pts = [proj(lon, lat) for lon, lat in line]
             for run in clip_polyline(pts, width, height):
-                run = simplify(run, 4.0)
-                if len(run) >= 2:
-                    rivers.append({"name": r["name"] or "", "rank": int(r["rank"]),
-                                   "pts": [round(v, 1) for p in run for v in p]})
+                for piece in split_runs(run, [not on_wide(x, y) for x, y in run]):
+                    piece = simplify(piece, 4.0)
+                    if len(piece) >= 2:
+                        rivers.append({"name": r["name"] or "", "rank": int(r["rank"]),
+                                       "pts": [round(v, 1) for p in piece for v in p]})
 
     features = []
     for name, kind, lon, lat, fkm, ang in GEO_LABELS:

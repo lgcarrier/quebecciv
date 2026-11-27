@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 import unittest
 
-from pipeline.build.world import channel, components, river_system, sea_flood
+from pipeline.build.world import components, sea_flood, split_runs
 from pipeline.core.hexgrid import HexGrid
 from pipeline.sources.atlas_water import LambertConformalConic, read_dbf, read_shp_polygons
 
@@ -69,22 +69,7 @@ class LambertTest(unittest.TestCase):
         self.assertAlmostEqual(math.hypot(x1 - x0, y1 - y0), expected, delta=expected * 1e-6)
 
 
-class ChannelTest(unittest.TestCase):
-    def test_channel_prefers_water_and_avoids_blocked_hexes(self):
-        g = HexGrid(radius=1.0, cols=6, rows=3)
-        water = {g.index(0, 1), g.index(1, 1), g.index(4, 1)}
-        sea = {g.index(5, 1)}
-        cost = lambda c: 0.01 if c in water else 1.0
-        path = channel(g, g.index(0, 1), sea, cost, set())
-        self.assertEqual(path[0], g.index(0, 1))
-        self.assertIn(path[-1], sea)
-        self.assertIn(g.index(4, 1), path)  # passe par l'eau
-        blocked = {g.index(2, 1), g.index(3, 1)}
-        path2 = channel(g, g.index(0, 1), sea, cost, blocked)
-        self.assertTrue(path2 and not set(path2) & blocked)
-        wall = {g.index(2, r) for r in range(3)}
-        self.assertIsNone(channel(g, g.index(0, 1), sea, cost, wall))
-
+class GridHelpersTest(unittest.TestCase):
     def test_components(self):
         g = HexGrid(radius=1.0, cols=10, rows=1)
         self.assertEqual(sorted(map(sorted, components(g, {0, 1, 2, 5, 6, 9}))), [[0, 1, 2], [5, 6], [9]])
@@ -110,20 +95,9 @@ class SeaFloodTest(unittest.TestCase):
         self.lake_share[self.row[0]] = 1.0
         self.assertEqual(sea_flood(self.g, self.is_water, self.lake_share), set())
 
-    def test_a_channel_carries_the_sea_through_a_lake(self):
-        # Le chenal ne passe que par le premier hexagone du lac : river_system y joint le second (même étendue d'eau),
-        # et la mer atteint alors l'eau libre en amont.
-        system = river_system(self.g, self.is_water, self.lake_share, {self.row[3]})
-        self.assertEqual(system, set(self.row[3:5]))
-        self.assertEqual(sea_flood(self.g, self.is_water, self.lake_share, system), set(self.row))
-
-    def test_a_lake_away_from_the_channel_stays_a_lake(self):
-        pond = self.g.index(5, 0)  # touche l'eau libre de la rangée, pas le chenal
-        self.is_water[pond], self.lake_share[pond] = True, 1.0
-        self.is_water[self.g.index(5, 1)] = True  # eau libre entre l'étang et la rangée
-        system = river_system(self.g, self.is_water, self.lake_share, {self.row[3]})
-        self.assertNotIn(pond, system)
-        self.assertNotIn(pond, sea_flood(self.g, self.is_water, self.lake_share, system))
+    def test_split_runs(self):
+        pts = list("abcdefg")
+        self.assertEqual(split_runs(pts, [True, True, False, True, False, True, True]), [["a", "b"], ["f", "g"]])
 
 
 if __name__ == "__main__":

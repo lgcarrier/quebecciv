@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 import unittest
 
-from pipeline.build.world import is_river_like, join_components
+from pipeline.build.world import channel, components
 from pipeline.core.hexgrid import HexGrid
 from pipeline.sources.atlas_water import LambertConformalConic, read_dbf, read_shp_polygons
 
@@ -69,21 +69,25 @@ class LambertTest(unittest.TestCase):
         self.assertAlmostEqual(math.hypot(x1 - x0, y1 - y0), expected, delta=expected * 1e-6)
 
 
-class RiverTest(unittest.TestCase):
-    def test_river_like(self):
-        long_river = [[(0, 0), (100, 0), (100, 2), (0, 2)]]  # 200 km², 100 km de long
-        round_lake = [[(0, 0), (20, 0), (20, 20), (0, 20)]]  # 400 km², compact
-        small = [[(0, 0), (20, 0), (20, 1), (0, 1)]]  # 20 km² : trop petit
-        self.assertAlmostEqual(is_river_like(long_river), 200.0)
-        self.assertEqual(is_river_like(round_lake), 0.0)
-        self.assertEqual(is_river_like(small), 0.0)
+class ChannelTest(unittest.TestCase):
+    def test_channel_prefers_water_and_avoids_blocked_hexes(self):
+        g = HexGrid(radius=1.0, cols=6, rows=3)
+        water = {g.index(0, 1), g.index(1, 1), g.index(4, 1)}
+        sea = {g.index(5, 1)}
+        cost = lambda c: 0.01 if c in water else 1.0
+        path = channel(g, g.index(0, 1), sea, cost, set())
+        self.assertEqual(path[0], g.index(0, 1))
+        self.assertIn(path[-1], sea)
+        self.assertIn(g.index(4, 1), path)  # passe par l'eau
+        blocked = {g.index(2, 1), g.index(3, 1)}
+        path2 = channel(g, g.index(0, 1), sea, cost, blocked)
+        self.assertTrue(path2 and not set(path2) & blocked)
+        wall = {g.index(2, r) for r in range(3)}
+        self.assertIsNone(channel(g, g.index(0, 1), sea, cost, wall))
 
-    def test_join_components_links_pieces_through_the_wettest_hexes(self):
+    def test_components(self):
         g = HexGrid(radius=1.0, cols=10, rows=1)
-        cand = set(range(10))
-        share = [0.5, 0.5, 0.1, 0.1, 0.1, 0.5, 0.5, 0.0, 0.0, 0.0]
-        out = join_components(g, cand, {0, 1, 5, 6}, share)
-        self.assertEqual(out, {0, 1, 2, 3, 4, 5, 6})
+        self.assertEqual(sorted(map(sorted, components(g, {0, 1, 2, 5, 6, 9}))), [[0, 1, 2], [5, 6], [9]])
 
 
 if __name__ == "__main__":

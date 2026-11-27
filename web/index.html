@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="fr-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Québec civ : le Québec comme jeu de stratégie</title>
+  <meta name="description" content="Le vrai Québec dessiné comme une carte de jeu de stratégie 4X : terrain en hexagones, villes et lentilles, à partir de données publiques (Statistique Canada, Natural Earth, NOAA).">
+  <meta name="theme-color" content="#131e2a">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='31' fill='%23120d06'/%3E%3Ccircle cx='32' cy='32' r='29' fill='%23c9a45c'/%3E%3Ccircle cx='32' cy='32' r='24' fill='%232a4d8f'/%3E%3Cpath fill='%23f8f0d8' d='M32 14l4.9 11.3 12.2 1.1-9.3 8.1 2.8 12-10.6-6.4-10.6 6.4 2.8-12-9.3-8.1 12.2-1.1z'/%3E%3C/svg%3E">
+  <!-- Pas encore publié : pas d'URL canonique ni de cartes sociales. -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand" title="Québec"><span class="brand-emblem" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.8L20.8 6.9V17.1L12 22.2L3.2 17.1V6.9Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M12 6.4L16.8 9.2V14.8L12 17.6L7.2 14.8V9.2Z" fill="currentColor" opacity=".55"/></svg></span><span class="brand-text">Québec</span></div>
+    <div id="yields" class="yields" aria-label="Totaux du Québec"></div>
+    <div class="spacer"></div>
+    <div class="search" role="search">
+      <span class="search-ic" aria-hidden="true"></span>
+      <input id="search-input" type="search" placeholder="Chercher un lieu, une ville, une région" autocomplete="off" spellcheck="false"
+        role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-results" aria-label="Chercher un lieu, une ville ou une région (/ ou Ctrl K)">
+      <kbd class="search-kbd" aria-hidden="true">/</kbd>
+      <button type="button" class="icon-btn search-close" aria-label="Fermer la recherche"></button>
+    </div>
+    <div id="turn" class="turn"></div>
+    <button id="btn-menu" class="btn btn-icon tb-menu-btn" type="button" aria-label="Menu : Partager, Aide, Almanach"
+      aria-haspopup="true" aria-expanded="false" aria-controls="tb-buttons"></button>
+    <div class="tb-buttons" id="tb-buttons">
+      <button id="btn-share" class="btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Partager cette vue" title="Partager : copier un lien ou télécharger une image"></button>
+      <button id="btn-help" class="btn btn-icon" aria-label="Aide clavier et souris" title="Aide (?)"></button>
+      <button id="btn-pedia" class="btn" aria-label="Ouvrir l'Almanach" title="Ce que veut dire chaque nombre et d'où il vient"></button>
+    </div>
+  </header>
+
+  <canvas id="map" role="img" aria-label="Carte hexagonale du Québec"></canvas>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+  <aside id="city-panel" class="panel" hidden role="region" aria-label="Détails"></aside>
+
+  <div id="lens-area">
+    <div id="lens-picker" class="panel lens-picker" hidden role="dialog" aria-label="Choisir une lentille"></div>
+    <div id="legend" class="panel legend" hidden role="group" aria-label="Légende de la lentille"></div>
+    <div id="lens-dock" class="panel lens-dock" role="toolbar" aria-label="Lentilles de la carte">
+      <button id="btn-res" class="lens-btn res-toggle" aria-pressed="true" aria-label="Ressources (R)" title="Ressources : pas encore de données pour le Québec" hidden></button>
+      <div id="lens-quick" class="lens-quick"></div>
+      <button id="btn-lenses" class="lens-btn lens-more" aria-haspopup="dialog" aria-expanded="false" aria-controls="lens-picker"></button>
+    </div>
+  </div>
+
+  <div id="minimap-wrap" class="panel"><canvas id="minimap" aria-label="Mini-carte : cliquer pour y sauter" role="img"></canvas></div>
+  <button id="btn-minimap" class="panel minimap-toggle" aria-pressed="false" aria-controls="minimap-wrap" aria-label="Afficher la mini-carte"></button>
+
+  <div id="search-results" class="panel search-results" role="listbox" aria-label="Résultats de recherche" hidden></div>
+  <div id="share-pop" class="panel share-pop" role="dialog" aria-label="Partager" hidden></div>
+  <div id="yield-report" class="panel yield-report" role="dialog" aria-label="Rapport du Québec" tabindex="-1" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <div id="pedia" class="modal" hidden>
+    <div class="modal-card panel" role="dialog" aria-modal="true" aria-label="Almanach">
+      <button class="close icon-btn" data-close aria-label="Fermer l'Almanach"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5.5 5.5L18.5 18.5M18.5 5.5L5.5 18.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg></button>
+      <nav id="pedia-nav" aria-label="Pages de l'Almanach"></nav>
+      <article id="pedia-body"></article>
+    </div>
+  </div>
+
+  <div id="help" class="modal" hidden>
+    <div class="help-card panel" role="dialog" aria-modal="true" aria-labelledby="help-title"></div>
+  </div>
+
+  <div id="loading">Arpentage du territoire…</div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -50,7 +50,10 @@ CHANNELS = [  # (nom, point d'amont lon/lat) ; l'aval est la mer reliée au bord
     ("Saguenay (Chicoutimi → Tadoussac)", -71.06, 48.43),
 ]
 WB_LAKE, WB_RIVER = 1, 2
-SEA_RIVERS = {"Fleuve Saint-Laurent"}  # Atlas water bodies joined to the sea (not counted as lakes)
+# Atlas water bodies joined to the sea (not counted as lakes). Only two pieces carry this name, both upstream of
+# Montréal (Cornwall to Lake Ontario): the river from Montréal to Québec is unnamed in the Atlas, which is why the
+# channels and river_system() decide its class below.
+SEA_RIVERS = {"Fleuve Saint-Laurent"}
 RIVER_STEP_KM = 0.5
 
 WATER_TABLE = [
@@ -156,6 +159,40 @@ def channel(grid, start: int, targets: set, step_cost, blocked: set) -> list[int
                 dist[n], prev[n] = nd, x
                 heapq.heappush(heap, (nd, n))
     return None
+
+
+def sea_flood(grid, is_water, lake_share, through=frozenset()) -> set:
+    """Water hexes joined to the open sea: the water hexes on the edge of the map that are not lakes, and every water
+    hex reached from them through hexes that are not lakes (`lake_share` < 0.5) or that belong to `through` (the river
+    channels, which are sea whatever the Atlas calls the water under them)."""
+    def open_water(i):
+        return is_water[i] and (lake_share[i] < 0.5 or i in through)
+
+    sea, q = set(), deque()
+    for i in range(grid.size):
+        col, row = grid.col_row(i)
+        if (col in (0, grid.cols - 1) or row in (0, grid.rows - 1)) and open_water(i):
+            sea.add(i)
+            q.append(i)
+    while q:
+        for j in grid.neighbours(q.popleft()):
+            if j not in sea and open_water(j):
+                sea.add(j)
+                q.append(j)
+    return sea
+
+
+def river_system(grid, is_water, lake_share, channel_cells) -> set:
+    """The channels plus the lake-like water hexes joined to them through lake-like hexes: the widenings of the river
+    (Lac Saint-Louis, Lac Saint-Pierre) and the reaches the Atlas leaves unnamed, which `lake_share` counts as lakes.
+    They are one body of water with the channel, so they take its class."""
+    out, q = set(channel_cells), deque(channel_cells)
+    while q:
+        for j in grid.neighbours(q.popleft()):
+            if j not in out and is_water[j] and lake_share[j] >= 0.5:
+                out.add(j)
+                q.append(j)
+    return out
 
 
 def classify_relief(mean: float, std: float) -> int:
@@ -355,17 +392,9 @@ def build() -> None:
             county[cell] = cd_index[csd[k]["uid"][:4]]
             forced += 1
     # Minimal channels (see CHANNELS): from the upstream hex to the sea, converting the fewest and wettest land hexes.
-    sea_cells = set()  # water joined to the open sea at the edge of the map
-    for i in range(grid.size):
-        col, row = grid.col_row(i)
-        if owner[i] == WATER_CELL and lake_share[i] < 0.5 and (col in (0, grid.cols - 1) or row in (0, grid.rows - 1)):
-            sea_cells.add(i)
-    sq = deque(sea_cells)
-    while sq:
-        for j in grid.neighbours(sq.popleft()):
-            if j not in sea_cells and owner[j] == WATER_CELL:
-                sea_cells.add(j)
-                sq.append(j)
+    # The sea a channel must reach is the one the water classes use below (sea_flood): water joined to the edge of the
+    # map without crossing a lake. Aiming at any water joined to the edge would let a channel stop in a lake.
+    sea_cells = sea_flood(grid, [o == WATER_CELL for o in owner], lake_share)
 
     def step_cost(c):
         if owner[c] == WATER_CELL:
@@ -399,8 +428,8 @@ def build() -> None:
             owner[c] = WATER_CELL
             county[c] = -1
         river_hex += len(conv)
-        sea_cells |= set(path)
         channel_cells |= set(path)
+        sea_cells = sea_flood(grid, [o == WATER_CELL for o in owner], lake_share, channel_cells)
         channel_report.append(f"{name} {len(path)} hexes, {len(conv)} land hexes made water")
 
     csd_point = {}
@@ -467,23 +496,14 @@ def build() -> None:
     # --- water classes --------------------------------------------------------------------------------------------
     water = [LAND] * grid.size
     is_water = [o == WATER_CELL for o in owner]
-    sea = [False] * grid.size
-    q = deque()
-    for i in range(grid.size):
-        col, row = grid.col_row(i)
-        if is_water[i] and (col in (0, grid.cols - 1) or row in (0, grid.rows - 1)) and lake_share[i] < 0.5:
-            sea[i] = True
-            q.append(i)
-    while q:
-        i = q.popleft()
-        for j in grid.neighbours(i):
-            if is_water[j] and not sea[j] and lake_share[j] < 0.5:
-                sea[j] = True
-                q.append(j)
+    # The channels and the river lakes joined to them are sea (class « Côte »), not lakes: the Atlas leaves the river
+    # from Montréal to Québec and the Saguenay unnamed (see SEA_RIVERS), so by name alone they would be classed as
+    # lakes, cut off from the estuary.
+    sea = sea_flood(grid, is_water, lake_share, river_system(grid, is_water, lake_share, channel_cells))
     for i in range(grid.size):
         if not is_water[i]:
             continue
-        if not sea[i]:
+        if i not in sea:
             water[i] = LAKE
             elev[i] = min(elev[i], 0) if elev[i] > -4000 else 0
             continue

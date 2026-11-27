@@ -100,6 +100,32 @@ class GridTest(unittest.TestCase):
         chicoutimi = grid.cell_at(*mp(-71.06, 48.43))  # le Saguenay rejoint aussi l'estuaire
         self.assertIn(chicoutimi, seen)
 
+    def test_st_lawrence_and_saguenay_are_sea_not_lake(self):
+        # Le fleuve et le Saguenay sont de la classe « Côte » (2), pas « Lac » (3) : on va du lac Saint-Louis et de
+        # Chicoutimi jusqu'à l'estuaire sans traverser un hexagone de lac (voir river_system dans build/world.py).
+        w = load("world.json")
+        proj = load("projection.json")
+        from pipeline.core.geo import MapProjection
+        mp = MapProjection(proj["min_x"], proj["max_y"], proj["margin"], proj["scale"])
+        grid = HexGrid.covering(w["width"], w["height"], w["grid"]["radius"])
+        water = w["water"]
+        goal = grid.cell_at(*mp(-68.3, 48.9))  # estuaire
+        places = {"lac Saint-Louis": (-73.85, 45.40), "port de Montréal": (-73.53, 45.51),
+                  "lac Saint-Pierre": (-72.85, 46.20), "Trois-Rivières": (-72.53, 46.33),
+                  "Chicoutimi": (-71.06, 48.43)}
+        for name, (lon, lat) in places.items():
+            start = grid.cell_at(*mp(lon, lat))
+            self.assertEqual(water[start], 2, name)
+            seen, q = {start}, [start]
+            for c in q:
+                for n in grid.neighbours(c):
+                    if n not in seen and water[n] in (1, 2):
+                        seen.add(n)
+                        q.append(n)
+            self.assertIn(goal, seen, name)
+        # Les vrais lacs restent des lacs.
+        self.assertEqual(water[grid.cell_at(*mp(-72.0, 48.6))], 3)  # lac Saint-Jean
+
     @unittest.skipUnless((ROOT / "data" / "interim" / "_places.json").exists(), "data/interim absent")
     def test_every_inhabited_municipality_has_land_of_its_own(self):
         # Chaque SDR habitée garde au moins un hexagone de terre où elle a des points (îles de Montréal, Laval,

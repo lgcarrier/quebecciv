@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 import unittest
 
-from pipeline.build.world import channel, components
+from pipeline.build.world import channel, components, river_system, sea_flood
 from pipeline.core.hexgrid import HexGrid
 from pipeline.sources.atlas_water import LambertConformalConic, read_dbf, read_shp_polygons
 
@@ -88,6 +88,42 @@ class ChannelTest(unittest.TestCase):
     def test_components(self):
         g = HexGrid(radius=1.0, cols=10, rows=1)
         self.assertEqual(sorted(map(sorted, components(g, {0, 1, 2, 5, 6, 9}))), [[0, 1, 2], [5, 6], [9]])
+
+
+class SeaFloodTest(unittest.TestCase):
+    """Une rangée d'eau qui part du bord gauche de la carte : mer, mer, mer, lac, lac, mer, mer, puis de la terre."""
+
+    def setUp(self):
+        self.g = g = HexGrid(radius=1.0, cols=8, rows=5)
+        self.row = [g.index(c, 2) for c in range(7)]
+        self.is_water = [False] * g.size
+        self.lake_share = [0.0] * g.size
+        for c in self.row:
+            self.is_water[c] = True
+        for c in self.row[3:5]:
+            self.lake_share[c] = 1.0
+
+    def test_a_lake_stops_the_sea(self):
+        self.assertEqual(sea_flood(self.g, self.is_water, self.lake_share), set(self.row[:3]))
+
+    def test_a_lake_on_the_edge_is_not_the_sea(self):
+        self.lake_share[self.row[0]] = 1.0
+        self.assertEqual(sea_flood(self.g, self.is_water, self.lake_share), set())
+
+    def test_a_channel_carries_the_sea_through_a_lake(self):
+        # Le chenal ne passe que par le premier hexagone du lac : river_system y joint le second (même étendue d'eau),
+        # et la mer atteint alors l'eau libre en amont.
+        system = river_system(self.g, self.is_water, self.lake_share, {self.row[3]})
+        self.assertEqual(system, set(self.row[3:5]))
+        self.assertEqual(sea_flood(self.g, self.is_water, self.lake_share, system), set(self.row))
+
+    def test_a_lake_away_from_the_channel_stays_a_lake(self):
+        pond = self.g.index(5, 0)  # touche l'eau libre de la rangée, pas le chenal
+        self.is_water[pond], self.lake_share[pond] = True, 1.0
+        self.is_water[self.g.index(5, 1)] = True  # eau libre entre l'étang et la rangée
+        system = river_system(self.g, self.is_water, self.lake_share, {self.row[3]})
+        self.assertNotIn(pond, system)
+        self.assertNotIn(pond, sea_flood(self.g, self.is_water, self.lake_share, system))
 
 
 if __name__ == "__main__":

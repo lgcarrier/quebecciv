@@ -88,6 +88,7 @@ Python 3.11 ou plus, bibliothèque standard seulement ; [uv](https://docs.astral
 
 ```sh
 uv run python -m pipeline all      # télécharge (data/raw), traite (data/interim) et bâtit web/data
+uv run python -m pipeline all --light  # sans le GeoTIFF de 2,1 Go : carte sans couverture du sol (à ne pas publier)
 uv run python -m pipeline check    # vérifie web/data
 uv run python -m unittest discover tests
 uv run python -m pipeline serve    # http://127.0.0.1:8765

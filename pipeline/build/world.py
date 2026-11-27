@@ -26,7 +26,8 @@ from ..core.raster import Raster
 from ..core.store import load_interim, save_interim, write_web
 from ..sources.atlas_water import LambertConformalConic
 
-REQUIRES = ["statcan_boundaries", "natural_earth", "etopo", "atlas_water", "nrcan_landcover"]
+REQUIRES = ["statcan_boundaries", "natural_earth", "etopo", "atlas_water"]
+OPTIONAL = ["nrcan_landcover"]  # a 2.1 GB download: without its interim the map is built with no land cover
 PRODUCES = ["world.json", "_world"]
 
 RASTER_KM = 0.5
@@ -539,8 +540,11 @@ def build() -> None:
     def lc_to_map(x, y):
         return proj(*lcc.inverse(x, y))
 
-    cover_counts = landcover.hex_counts(landcover.LandcoverPoints(load_interim("nrcan_landcover")), lc_to_map,
-                                        grid.cell_at)
+    try:
+        lc_points = landcover.LandcoverPoints(load_interim("nrcan_landcover"))
+    except FileNotFoundError:
+        lc_points = None  # optional source (see OPTIONAL): `pipeline --light`, or never fetched
+    cover_counts = landcover.hex_counts(lc_points, lc_to_map, grid.cell_at) if lc_points else {}
     cover = [0] * grid.size
     forest_pct = [0] * grid.size  # share of the hex in forest (%), for the density of the trees drawn
     for c, cnt in cover_counts.items():
@@ -549,8 +553,13 @@ def build() -> None:
             forest_pct[c] = round(100 * landcover.group_shares(cnt)["forest"])
     qc_cover = {c: cnt for c, cnt in cover_counts.items() if owner[c] >= 0}
     no_cover = sum(1 for i in range(grid.size) if owner[i] >= 0 and i not in qc_cover)
-    print(f"    land cover: {len(cover_counts)} hexes with points, {no_cover} Québec hexes without; "
-          f"{sum(sum(v.values()) for v in qc_cover.values()) / max(1, len(qc_cover)):.0f} points per Québec hex")
+    if lc_points:
+        print(f"    land cover: {len(cover_counts)} hexes with points, {no_cover} Québec hexes without; "
+              f"{sum(sum(v.values()) for v in qc_cover.values()) / max(1, len(qc_cover)):.0f} points per Québec hex")
+    else:
+        print("    ! land cover: interim 'nrcan_landcover' missing – the map is built WITHOUT land cover (land coloured "
+              "by elevation, no land lenses). Do not commit web/data from this build; for the full map run: "
+              "uv run python -m pipeline fetch nrcan_landcover && uv run python -m pipeline process nrcan_landcover")
 
     n_qc = sum(1 for o in owner if o >= 0)
     print(f"    {n_qc} hexes in Québec, {sum(1 for o in owner if o == FOREIGN)} neighbour land, "
@@ -571,9 +580,11 @@ def build() -> None:
         "water": water,
         "relief": relief,
         "cover": cover,
-        "pct": {"forest": forest_pct},
-        "tables": {"water": WATER_TABLE, "relief": RELIEF_TABLE, "cover": landcover.COVER_TABLE,
-                   "notes": {"water": WATER_NOTE, "relief": RELIEF_NOTE, "cover": COVER_NOTE}},
+        "pct": {"forest": forest_pct} if lc_points else None,
+        "tables": {"water": WATER_TABLE, "relief": RELIEF_TABLE,
+                   "cover": landcover.COVER_TABLE if lc_points else landcover.NO_COVER_TABLE,
+                   "notes": {"water": WATER_NOTE, "relief": RELIEF_NOTE,
+                             "cover": COVER_NOTE if lc_points else landcover.NO_COVER_NOTE}},
         "states": states,
         "counties": [{"geoid": c["uid"], "name": c["name"]} for c in cds],
         "rivers": rivers,

@@ -35,6 +35,9 @@ class SourceInfo:
 
 class Source:
     info: SourceInfo
+    # True for a source the map can be built without (a very large download). `--light` leaves it out of fetch and
+    # process; the builders that list it in OPTIONAL then do without its interim.
+    optional = False
 
     @property
     def id(self) -> str:

@@ -63,6 +63,12 @@ COVER_TABLE = [
      "reboise."},
 ]
 
+# Table et note de world.json quand la carte est bâtie sans la couverture du sol (source facultative absente).
+NO_COVER_TABLE = [{"id": 0, "key": "none", "name": "Non disponible", "rule": "Carte bâtie sans la couverture du sol "
+                   "(source nrcan_landcover absente) : la couleur de la terre suit l'altitude."}]
+NO_COVER_NOTE = ("Cette carte a été bâtie sans la couverture du sol du Canada de RNCan (téléchargement facultatif de "
+                 "2,1 Go) : la terre est colorée selon l'altitude et les lentilles du territoire sont absentes.")
+
 
 class LandcoverPoints:
     """The interim points: a regular grid in the source projection, one class byte per point."""

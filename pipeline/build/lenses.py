@@ -101,7 +101,9 @@ def build() -> None:
     ]
     values = {"density": density, "growth": growth}
     cover = {int(c): {int(k): v for k, v in cnt.items()} for c, cnt in w["cover_counts"].items()}
-    for spec in COVER_LENSES:
+    if not cover:  # the map was built without the optional land cover source (world.py): no land lenses
+        print("    ! no land cover in _world: the land lenses (forest, farmland, wetland, developed) are left out")
+    for spec in COVER_LENSES if cover else []:
         vals = [None] * n
         for c, cnt in cover.items():
             gs = landcover.group_shares(cnt)
@@ -116,9 +118,10 @@ def build() -> None:
     for lens in lenses:
         write_web(f"lenses/{lens['id']}.json", {"id": lens["id"], "values": values[lens["id"]]})
     write_web("lenses.json", {
-        "vintage": "Statistique Canada, Recensement de 2021 (et 2016) ; RNCan, couverture du sol du Canada 2020",
-        "groups": [{"id": "people", "name": "Population"}, {"id": "land", "name": "Territoire"}],
+        "vintage": "Statistique Canada, Recensement de 2021 (et 2016)"
+                   + (" ; RNCan, couverture du sol du Canada 2020" if cover else ""),
+        "groups": [{"id": "people", "name": "Population"}] + ([{"id": "land", "name": "Territoire"}] if cover else []),
         "lenses": lenses,
     })
     print(f"    density domain {lenses[0]['domain']}, growth domain {lenses[1]['domain']}; "
-          f"cover lenses {[sp['id'] for sp in COVER_LENSES]}")
+          f"cover lenses {[sp['id'] for sp in COVER_LENSES] if cover else 'none'}")

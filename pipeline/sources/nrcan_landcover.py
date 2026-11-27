@@ -59,6 +59,7 @@ def window(lcc, bbox=BBOX, n=40):
 
 
 class NrcanLandcover(Source):
+    optional = True  # 2,1 Go : `pipeline --light` s'en passe (la carte est alors bâtie sans couverture du sol)
     info = SourceInfo(
         id="nrcan_landcover",
         title="Couverture du sol du Canada 2020 (30 m)",

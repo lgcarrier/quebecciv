@@ -94,6 +94,9 @@ def check_world(r: Report, w) -> dict | None:
     r.ok(f"grille {w['grid']['cols']} × {w['grid']['rows']} = {n} hexagones de {w['grid']['radius'] * w['km_per_unit']:.1f} km "
          f"de rayon ; {len(land)} au Québec, {sum(1 for o in w['owner'] if o == -2)} chez les voisins")
     r.ok(f"{ns} régions, {nc} divisions de recensement (MRC et équivalents), {len(w['rivers'])} tronçons de rivière")
+    if not any(w["cover"]):
+        r.warn("aucune couverture du sol : carte bâtie sans la source nrcan_landcover (pipeline --light) ; à ne pas "
+               "publier telle quelle")
     return {"n": n, "owner": w["owner"], "states": w["states"]}
 
 

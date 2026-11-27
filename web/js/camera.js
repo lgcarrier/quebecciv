@@ -11,6 +11,21 @@ const GLIDE_MIN = 120;
 const GLIDE_MAX = 3200;
 const GLIDE_STOP = 20;
 
+// Wheel zoom. deltaY is normalised to pixels (lines × 33, pages × 0.8 viewport); a mouse notch (≈100 px in Chrome,
+// 3 lines in Firefox) then zooms by e^0.14 ≈ ×1.15, so ten notches make ×4 rather than ×9 before. Each event is
+// capped at one notch (WHEEL_CAP), so a fast-spinning or "free-wheeling" wheel and the 120 px notches of some mice
+// cannot jump; trackpad scrolling sends small deltas and stays proportional. A trackpad pinch arrives as a wheel event
+// with ctrlKey and deltas of a few px: it gets its own, livelier rate so pinching still feels direct.
+export const WHEEL_RATE = 0.0014;
+export const WHEEL_CAP = 100;
+export const PINCH_RATE = 0.01;
+export function wheelZoomFactor(e, viewH = typeof innerHeight === "number" ? innerHeight : 800) {
+  const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * viewH * 0.8 : e.deltaY;
+  if (!Number.isFinite(px) || px === 0) return 1;
+  if (e.ctrlKey) return Math.exp(-Math.max(-25, Math.min(25, px)) * PINCH_RATE);
+  return Math.exp(-Math.max(-WHEEL_CAP, Math.min(WHEEL_CAP, px)) * WHEEL_RATE);
+}
+
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
 export class Camera {

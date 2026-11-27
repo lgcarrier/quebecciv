@@ -391,7 +391,7 @@ export function createUi(app, { toast, onLayout }) {
 
 /**
  * app.ui.addMapToggle({id, label, icon, get() → bool, set(on), title?, default?}) → remove function
- *   A switch for a map layer, listed in the "Map layers" menu next to the Resources toggle in the lens dock (one
+ *   A switch for a map layer, listed in the "Couches de la carte" menu next to the Resources toggle in the lens dock (one
  *   button that opens a small menu, so any number of layers fits on a phone). `icon` is an icons.js id or a short
  *   text / emoji. `set(on)` is yours: flip your layer's state (its visible()/sig() then change and the static map
  *   re-renders; main also calls app.requestDraw()). `default` is the state when the URL says nothing (defaults to
@@ -459,7 +459,7 @@ export function createMapToggles({ dock, after, area, hash, onChange }) {
     pop.className = "panel map-layers-pop";
     pop.hidden = true;
     pop.setAttribute("role", "menu");
-    pop.setAttribute("aria-label", "Map layers");
+    pop.setAttribute("aria-label", "Couches de la carte");
     (area || document.body).insertBefore(pop, (area || document.body).firstChild);
     btn.onclick = () => (pop.hidden ? open() : close());
     pop.onclick = (e) => {
@@ -494,9 +494,9 @@ export function createMapToggles({ dock, after, area, hash, onChange }) {
     const nOn = list.filter(isOn).length;
     btn.classList.toggle("active", nOn > 0);
     btn.setAttribute("aria-label", `Couches de la carte (${nOn} sur ${list.length} actives)`);
-    btn.innerHTML = `${glyph("terrain", 15)}<span>Map</span>${nOn ? `<b class="ml-count">${nOn}</b>` : ""}`;
+    btn.innerHTML = `${glyph("terrain", 15)}<span>Carte</span>${nOn ? `<b class="ml-count">${nOn}</b>` : ""}`;
     if (pop.hidden) return;
-    pop.innerHTML = `<div class="ml-head">Map layers</div>` + list.map((t) => {
+    pop.innerHTML = `<div class="ml-head">Couches de la carte</div>` + list.map((t) => {
       const on = isOn(t);
       return `<button type="button" class="ml-row${on ? " on" : ""}" role="menuitemcheckbox" aria-checked="${on}" data-toggle="${esc(t.id)}"
         ${t.title ? `title="${esc(t.title)}"` : ""}><span class="ml-ic">${glyph(t.icon, 16)}</span><span class="ml-lbl">${esc(t.label)}</span>

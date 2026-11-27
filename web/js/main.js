@@ -1,4 +1,4 @@
-import { Camera } from "./camera.js";
+import { Camera, wheelZoomFactor } from "./camera.js";
 import { prepareWorld, applyLens, stateIndex } from "./world.js";
 import * as mapRender from "./render/map.js";
 import { drawBanners } from "./render/banners.js";
@@ -255,7 +255,7 @@ async function main() {
   // The first render at a new zoom paints that zoom's terrain and city sprites (150-300 ms when zoomed in). Once the
   // view settles, idle time paints them for the next zoom step in and out, a strip at a time, so a wheel notch or a
   // +/- key lands on warm caches. Any camera move, lens or toggle change abandons the remaining work.
-  const WARM_STEPS = [1.25, 0.8]; // ~one wheel notch (e^±0.22) and one sprite bucket (2^±0.25) in, then out
+  const WARM_STEPS = [1.19, 0.84]; // ~one sprite bucket (2^±0.25), a little more than one wheel notch (e^±0.14), in then out
   const WARM_STRIPS = 6;
   const warm = { cv: null, ctx: null, handle: 0, jobs: [], sig: "" };
   const idle = typeof requestIdleCallback === "function"
@@ -752,7 +752,7 @@ async function main() {
     state.selectedState = null;
     app.panels.city(city, panelCtx());
     if (fly && city.cell != null) focusCity(city);
-    announce(`${city.name} selected. ${city.full || ""}`);
+    announce(`${city.name} sélectionnée. ${city.full || ""}`);
     afterSelect();
   }
 
@@ -763,7 +763,7 @@ async function main() {
     state.selectedState = idx;
     app.panels.state(idx, panelCtx());
     if (fly) focusState(idx);
-    announce(`${stateName(idx)} selected.`);
+    announce(`${stateName(idx)} sélectionnée.`);
     afterSelect();
   }
 
@@ -772,7 +772,7 @@ async function main() {
     state.selectedCity = null;
     state.selectedState = null;
     app.panels.close();
-    if (had) announce("Selection closed.");
+    if (had) announce("Sélection fermée.");
     afterSelect();
   }
 
@@ -896,7 +896,7 @@ async function main() {
     invalidateHighlight?.();
     if (fly) flyToVisible(w.grid.cx(c.cell), w.grid.cy(c.cell), fitScale() * 2 ** 3.2);
     communeCard.show(c);
-    announce(`${c.name} selected.`);
+    announce(`${c.name} sélectionnée.`);
     url.schedule();
   }
   // communes.json rows as objects, by GISCO code (loaded once, on demand).
@@ -1075,7 +1075,7 @@ async function main() {
   const resBtn = document.getElementById("btn-res");
   if (resBtn) {
     resBtn.hidden = !w.resources;
-    resBtn.innerHTML = `${icon("resources", null, { size: 15 })}<span>Resources</span>`;
+    resBtn.innerHTML = `${icon("resources", null, { size: 15 })}<span>Ressources</span>`;
     const sync = () => {
       resBtn.classList.toggle("active", state.showResources);
       resBtn.setAttribute("aria-pressed", String(state.showResources));
@@ -1395,8 +1395,7 @@ async function main() {
   });
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const delta = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
-    cam.zoomBy(e.clientX, e.clientY, Math.exp(-Math.max(-300, Math.min(300, delta)) * 0.0022));
+    cam.zoomBy(e.clientX, e.clientY, wheelZoomFactor(e));
     moved();
     requestDraw();
   }, { passive: false });

@@ -242,7 +242,7 @@ export function initLensDock(opts) {
   function renderCategoricalLegend(l) {
     const counts = catCounts(l);
     const sw = l.categories.map((c, k) => `<button type="button" class="lg-cat" data-k="${k}" aria-pressed="false"
-        title="${esc(c.description || c.name)} (${counts[k]} hexes)"><i style="background:${esc(c.color || l.ramp[k] || "#888")}"></i><span>${esc(c.name)}</span></button>`).join("");
+        title="${esc(c.description || c.name)} (${counts[k]} hexagones)"><i style="background:${esc(c.color || l.ramp[k] || "#888")}"></i><span>${esc(c.name)}</span></button>`).join("");
     legend.hidden = false;
     legend.innerHTML = `
       <div class="lg-head"><span class="lg-ic">${glyph(l, 18)}</span><span class="title">${esc(l.name)}</span>
@@ -250,9 +250,9 @@ export function initLensDock(opts) {
         <button class="icon-btn lg-close" aria-label="Désactiver la lentille (retour au terrain)" title="Retour au terrain">${icon("close", null, { size: 11 })}</button></div>
       <div class="desc">${esc(l.description || l.unit || "")}</div>
       ${noteHtml(l)}
-      <div class="lg-cats" role="group" aria-label="${esc(l.name)} categories: click one to show only it">${sw}</div>
+      <div class="lg-cats" role="group" aria-label="${esc(l.name)} : cliquer sur une catégorie pour n'afficher qu'elle">${sw}</div>
       <div class="lg-meta"><span class="src">${sourceLine(l)}</span></div>
-      <div class="lg-hint" aria-live="polite">Click a category to show only it</div>`;
+      <div class="lg-hint" aria-live="polite">Cliquez sur une catégorie pour n'afficher qu'elle</div>`;
     legend.querySelector(".lg-close").onclick = () => opts.onPick(null);
     legend.classList.toggle("expanded", legendExpanded);
     legend.querySelector(".lg-more").onclick = () => {
@@ -296,8 +296,8 @@ export function initLensDock(opts) {
     const ticks = [0, 0.25, 0.5, 0.75, 1]
       .map((t, k) => `<span style="left:${t * 100}%;transform:translateX(-${t * 100}%)">${esc(formatLensTick(l, t, k))}</span>`)
       .join("");
-    const hib = l.higher_is === "good" ? `<span class="hib good">▲ Higher is better</span>`
-      : l.higher_is === "bad" ? `<span class="hib bad">▲ Higher is worse</span>` : "";
+    const hib = l.higher_is === "good" ? `<span class="hib good">▲ Plus haut, c'est mieux</span>`
+      : l.higher_is === "bad" ? `<span class="hib bad">▲ Plus haut, c'est pire</span>` : "";
     legend.hidden = false;
     legend.innerHTML = `
       <div class="lg-head"><span class="lg-ic">${glyph(l, 18)}</span><span class="title">${esc(l.name)}</span>
@@ -415,9 +415,9 @@ export function initLensDock(opts) {
       mark.style.width = Math.max(0.5, (b - a) * 100) + "%";
       const lo = band[0] <= 0 ? "≤ " + formatLensValue(active, lensValueAt(active, b)) : null;
       const hi = band[1] >= 1 ? "≥ " + formatLensValue(active, lensValueAt(active, a)) : null;
-      const txt = band[0] <= 0 && band[1] >= 1 ? "all values"
+      const txt = band[0] <= 0 && band[1] >= 1 ? "toutes les valeurs"
         : lo || hi || `${formatLensValue(active, lensValueAt(active, a))} – ${formatLensValue(active, lensValueAt(active, b))}`;
-      hint.textContent = `Showing only ${txt}`;
+      hint.textContent = `Seulement : ${txt}`;
       hint.classList.add("on");
       scale.setAttribute("aria-valuenow", String(Math.round(((a + b) / 2) * 100)));
     }

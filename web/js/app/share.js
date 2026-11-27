@@ -258,7 +258,7 @@ export function initShare(opts) {
       const link = opts.link?.() || location.href;
       if (await copyText(link)) {
         status.textContent = "Lien copié dans le presse-papiers";
-        opts.onToast?.("Link copied");
+        opts.onToast?.("Lien copié");
       } else {
         status.textContent = "Copiez ce lien :";
         urlBox.hidden = false;
@@ -280,7 +280,7 @@ export function initShare(opts) {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-        status.textContent = `Saved ${a.download}`;
+        status.textContent = `Image enregistrée : ${a.download}`;
       } catch (err) {
         console.warn(err);
         status.textContent = "Impossible de créer l'image dans ce navigateur.";

@@ -19,13 +19,13 @@ const LENS_FOR = { population: "density", gold: "income", food: "farmland", unem
 // The advisor dashboard (ext/advisors) that explores each report further; `industry` preselects the Economy
 // advisor's specialisation ranking. Buttons show only when the advisors extension is installed.
 const ADVISOR_FOR = {
-  population: [{ id: "people", label: "People" }],
-  gold: [{ id: "economy", label: "Economy" }],
-  food: [{ id: "land", label: "Land" }, { id: "economy", label: "Economy (farming)", industry: "agriculture" }],
-  production: [{ id: "economy", label: "Economy (manufacturing)", industry: "manufacturing" }, { id: "energy", label: "Energy & Resources" }],
-  science: [{ id: "knowledge", label: "Knowledge" }],
-  culture: [{ id: "economy", label: "Economy (arts)", industry: "arts" }],
-  unemployment: [{ id: "prosperity", label: "Prosperity" }],
+  population: [{ id: "people", label: "Population" }],
+  gold: [{ id: "economy", label: "Économie" }],
+  food: [{ id: "land", label: "Territoire" }, { id: "economy", label: "Économie (agriculture)", industry: "agriculture" }],
+  production: [{ id: "economy", label: "Économie (fabrication)", industry: "manufacturing" }, { id: "energy", label: "Énergie et ressources" }],
+  science: [{ id: "knowledge", label: "Savoir" }],
+  culture: [{ id: "economy", label: "Économie (arts)", industry: "arts" }],
+  unemployment: [{ id: "prosperity", label: "Prospérité" }],
 };
 const advisorApp = () => (typeof window !== "undefined" && window.__app?.hasMode?.("advisor") ? window.__app : null);
 
@@ -59,7 +59,7 @@ export function statDefs(nation) {
   const yields = (nation?.yields || []).map((y) => ({
     key: y.key,
     label: y.label,
-    name: y.key === "gold" ? `${y.label} (GDP)` : y.label,
+    name: y.key === "gold" ? `${y.label} (PIB)` : y.label,
     color: y.color,
     yield: y,
     unit: y.unit,
@@ -77,7 +77,7 @@ export function statDefs(nation) {
 }
 
 const industryLabel = (nation, k, gdp = false) => {
-  const full = (gdp ? nation.gdp_industries?.[k] : null) || nation.industries?.[k] || (k === "government" ? "Public administration" : k);
+  const full = (gdp ? nation.gdp_industries?.[k] : null) || nation.industries?.[k] || (k === "government" ? "Administration publique" : k);
   return { label: full.replace(/\s*\(.*\)\s*$/, ""), full };
 };
 const industryIcon = (k) => (hasIcon(`i-${k}`) ? `i-${k}` : k === "government" && hasIcon("i-public_admin") ? "i-public_admin" : null);
@@ -194,25 +194,25 @@ function reportPopulation(rep, n, st, metros) {
 
 function reportUnemployment(rep, n, st, metros) {
   const u = (o) => o.unemployment;
-  if (fin(n.unemployment) && n.unemployment > 0) rep.context.push(`About 1 in ${Math.round(1 / n.unemployment)} people in the labour force is out of work`);
+  if (fin(n.unemployment) && n.unemployment > 0) rep.context.push(`Environ 1 personne active sur ${Math.round(1 / n.unemployment)} est sans emploi`);
   const ss = sorted(st, u);
-  if (ss.length >= 2) rep.context.push(`${rep.scope.note ? rep.scope.inMap : rep.scope.label} range from ${pct(ss.at(-1).v)} to ${pct(ss[0].v)}`);
+  if (ss.length >= 2) rep.context.push(`${rep.scope.note ? rep.scope.inMap : rep.scope.label} : de ${pct(ss.at(-1).v)} à ${pct(ss[0].v)}`);
 
   const tone = (v) => (!fin(n.unemployment) || Math.abs(v / n.unemployment - 1) < 0.03 ? null : v > n.unemployment ? "bad" : "good");
   const row = (label, x) => ({ label: `${label}: ${x.r.name}`, sub: x.r.kind === "city" ? x.r.sub : "", value: x.v, text: pct(x.v), tone: tone(x.v) });
-  const spread = (list) => (list.length >= 3 ? [row("Highest", list[0]), row("Median", list[Math.floor(list.length / 2)]), row("Lowest", list.at(-1))] : []);
+  const spread = (list) => (list.length >= 3 ? [row("Le plus haut", list[0]), row("Médiane", list[Math.floor(list.length / 2)]), row("Le plus bas", list.at(-1))] : []);
   const groups = [];
   if (fin(n.unemployment)) groups.push({ rows: [{ label: "Québec", value: n.unemployment, text: pct(n.unemployment), strong: true }] });
   const sRows = spread(ss), mRows = spread(sorted(metros, u, BIG_METRO_MIN));
   if (sRows.length) groups.push({ title: rep.scope.label, rows: sRows });
-  if (mRows.length) groups.push({ title: `Large urban areas (${compact(BIG_METRO_MIN)}+)`, rows: mRows });
-  if (groups.length) rep.breakdown = { title: "Spread", note: rep.scope.note, groups };
+  if (mRows.length) groups.push({ title: `Grandes agglomérations (${compact(BIG_METRO_MIN)} hab. et plus)`, rows: mRows });
+  if (groups.length) rep.breakdown = { title: "Écarts", note: rep.scope.note, groups };
 
-  const hint = `Urban areas of ${compact(BIG_METRO_MIN)}+ people; a city shows the rate of its NUTS 2 region(s).`;
+  const hint = `Agglomérations de ${compact(BIG_METRO_MIN)} habitants et plus.`;
   const o = { fmt: pct, exact: (v) => pct(v, 2) };
   rep.boards.modes = [
-    { id: "abs", label: "Highest", hint, states: rank(st, u, o), metros: rank(metros, u, { ...o, min: BIG_METRO_MIN }) },
-    { id: "rel", label: "Lowest", hint, states: rank(st, u, { ...o, asc: true }), metros: rank(metros, u, { ...o, asc: true, min: BIG_METRO_MIN }) },
+    { id: "abs", label: "Les plus hauts", hint, states: rank(st, u, o), metros: rank(metros, u, { ...o, min: BIG_METRO_MIN }) },
+    { id: "rel", label: "Les plus bas", hint, states: rank(st, u, { ...o, asc: true }), metros: rank(metros, u, { ...o, asc: true, min: BIG_METRO_MIN }) },
   ];
 }
 
@@ -221,9 +221,9 @@ function reportGold(rep, nation, n, st, metros) {
   const pp = ratio(rep.total, n.population);
   // GDP and population can come from different years (GDP lags the population figures): say which.
   const popYear = fin(nation.year) ? nation.year : null;
-  const years = n.gdp_year && popYear && n.gdp_year !== popYear ? `${n.gdp_year} GDP ÷ ${popYear} residents` : "GDP ÷ residents";
-  if (pp != null) rep.context.push(`${money(pp)} per person (${years})`);
-  if (n.gdp_year) rep.context.push(`Year ${n.gdp_year}, current euros`);
+  const years = n.gdp_year && popYear && n.gdp_year !== popYear ? `PIB ${n.gdp_year} ÷ habitants ${popYear}` : "PIB ÷ habitants";
+  if (pp != null) rep.context.push(`${money(pp)} par habitant (${years})`);
+  if (n.gdp_year) rep.context.push(`Année ${n.gdp_year}, dollars courants`);
 
   const rows = Object.entries(n.gdp_by_industry || {})
     .filter(([, v]) => fin(v))
@@ -233,13 +233,13 @@ function reportGold(rep, nation, n, st, metros) {
       const s = ratio(v, rep.total);
       return { label, full, iconId: industryIcon(k), emoji: DISTRICT_ICON[k] || "•", value: v, text: money(v), sub: s != null ? pct(s) : "" };
     });
-  if (rows.length) rep.breakdown = { title: "GDP by industry", groups: [{ rows }], collapseAfter: GDP_ROWS };
+  if (rows.length) rep.breakdown = { title: "PIB par industrie", groups: [{ rows }], collapseAfter: GDP_ROWS };
 
   const perPerson = (o) => ratio(gdp(o), o.population);
   rep.boards.modes = [
-    { id: "abs", label: "Largest GDP", states: rank(st, gdp, { fmt: money, exact: dollars }), metros: rank(metros, gdp, { fmt: money, exact: dollars }) },
+    { id: "abs", label: "PIB le plus élevé", states: rank(st, gdp, { fmt: money, exact: dollars }), metros: rank(metros, gdp, { fmt: money, exact: dollars }) },
     {
-      id: "rel", label: "Per person", hint: `${years}; urban areas of ${compact(METRO_MIN)}+ people.`,
+      id: "rel", label: "Par habitant", hint: `${years} ; agglomérations de ${compact(METRO_MIN)} habitants et plus.`,
       states: rank(st, perPerson, { fmt: money, exact: dollars }), metros: rank(metros, perPerson, { fmt: money, exact: dollars, min: METRO_MIN }),
     },
   ];
@@ -248,19 +248,19 @@ function reportGold(rep, nation, n, st, metros) {
 function reportJobs(rep, def, nation, n, st, metros) {
   const key = def.key;
   const nShare = ratio(rep.total, n.employed);
-  if (nShare != null) rep.context.push(`${pct(nShare)} of the ${compact(n.employed)} jobs`);
+  if (nShare != null) rep.context.push(`${pct(nShare)} des ${compact(n.employed)} emplois`);
   const per1k = ratio(rep.total, n.population);
-  if (per1k != null) rep.context.push(`${Math.round(per1k * 1000)} per 1,000 residents`);
+  if (per1k != null) rep.context.push(`${Math.round(per1k * 1000)} pour 1 000 habitants`);
 
   const inds = Array.isArray(def.yield?.industries) ? def.yield.industries : [];
   const gdpOf = inds.map((k) => n.gdp_by_industry?.[k]);
   if (inds.length && gdpOf.every(fin) && fin(n.gdp)) {
     const sum = gdpOf.reduce((a, b) => a + b, 0);
-    rep.context.push(`${inds.length > 1 ? "These industries produce" : "The industry produces"} ${money(sum)} of GDP (${pct(sum / n.gdp)}${n.gdp_year ? `, ${n.gdp_year}` : ""})`);
+    rep.context.push(`${inds.length > 1 ? "Ces industries produisent" : "Cette industrie produit"} ${money(sum)} de PIB (${pct(sum / n.gdp)}${n.gdp_year ? `, ${n.gdp_year}` : ""})`);
   }
   // Worker counts and GDP figures come from different sources: credit both.
   if (inds.some((k) => fin(n.gdp_by_industry?.[k])) && nation.gdp_vintage && nation.gdp_vintage !== rep.source) {
-    rep.source = `${rep.source ? `${rep.source} (jobs); ` : ""}${nation.gdp_vintage} (GDP)`;
+    rep.source = `${rep.source ? `${rep.source} (emplois) ; ` : ""}${nation.gdp_vintage} (PIB)`;
   }
   const rows = inds
     .map((k) => {
@@ -269,26 +269,26 @@ function reportJobs(rep, def, nation, n, st, metros) {
       const { label, full } = industryLabel(nation, k);
       const s = ratio(v, n.employed);
       const g = n.gdp_by_industry?.[k];
-      const sub = [s != null ? `${pct(s)} of all jobs` : "", fin(g) ? `GDP ${money(g)}` : ""].filter(Boolean).join(" · ");
+      const sub = [s != null ? `${pct(s)} de tous les emplois` : "", fin(g) ? `PIB ${money(g)}` : ""].filter(Boolean).join(" · ");
       return { label, full, iconId: industryIcon(k), emoji: DISTRICT_ICON[k] || "•", value: v, text: compact(v), sub };
     })
     .filter(Boolean)
     .sort((a, b) => b.value - a.value);
-  if (rows.length) rep.breakdown = { title: "Jobs by industry", note: "Jobs in each industry, counted where people work.", groups: [{ rows }] };
+  if (rows.length) rep.breakdown = { title: "Emplois par industrie", note: "Emplois de chaque industrie, comptés au lieu de travail.", groups: [{ rows }] };
 
   const y = (o) => o.yields?.[key];
   const lq = (o) => (nShare ? ratio(ratio(y(o), o.employed), nShare) : null);
   const shareSub = (o) => {
     const s = ratio(y(o), o.employed);
-    return s != null ? `${pct(s)} of jobs` : "";
+    return s != null ? `${pct(s)} des emplois` : "";
   };
   const fmtLq = (v) => `×${dec(v, 2)}`;
   const exactLq = (v) => `×${dec(v, 3)}`;
   rep.boards.modes = [
-    { id: "abs", label: "Most jobs", states: rank(st, y), metros: rank(metros, y) },
+    { id: "abs", label: "Le plus d'emplois", states: rank(st, y), metros: rank(metros, y) },
     {
-      id: "rel", label: "Specialisation",
-      hint: `Share of the area's jobs in ${def.label.toLowerCase()} ÷ the European share (${pct(nShare)}); urban areas of ${compact(METRO_MIN)}+ people.`,
+      id: "rel", label: "Spécialisation",
+      hint: `Part des emplois du territoire dans ce domaine (${def.label.toLowerCase()}) ÷ la part québécoise (${pct(nShare)}) ; agglomérations de ${compact(METRO_MIN)} habitants et plus.`,
       states: rank(st, lq, { fmt: fmtLq, exact: exactLq, subOf: shareSub }), metros: rank(metros, lq, { fmt: fmtLq, exact: exactLq, subOf: shareSub, min: METRO_MIN }),
     },
   ];
@@ -424,7 +424,7 @@ export function initYieldReports(opts) {
     const list = advisorApp() ? ADVISOR_FOR[key] || [] : [];
     if (!list.length) return "";
     return `<div class="yr-foot yr-adv">${list.map((a) => `<button class="btn yr-advisor" data-advisor="${esc(a.id)}"${a.industry ? ` data-industry="${esc(a.industry)}"` : ""}
-      title="Open the ${esc(a.label.replace(/ \(.*\)$/, ""))} advisor: charts, tables and the map linked together">${icon("g-people", null, { size: 14 })}Open advisor: ${esc(a.label)}</button>`).join("")}</div>`;
+      title="Ouvrir le conseiller ${esc(a.label.replace(/ \(.*\)$/, ""))} : graphiques, tableaux et carte liés">${icon("g-people", null, { size: 14 })}Conseiller : ${esc(a.label)}</button>`).join("")}</div>`;
   }
 
   // The ranking's hint, plus (on the Countries tab) which countries are ranked.

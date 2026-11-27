@@ -73,8 +73,8 @@ function mapMenu(bar) {
   if (!brand || !text || brand.querySelector(".map-picker")) return;
   const sel = document.createElement("select");
   sel.className = "map-picker";
-  sel.setAttribute("aria-label", "Switch map");
-  sel.title = "Switch map";
+  sel.setAttribute("aria-label", "Changer de carte");
+  sel.title = "Changer de carte";
   sel.innerHTML = MAPS.map((m) => `<option value="${m.id}"${m.id === HERE ? " selected" : ""}>${m.label}</option>`).join("");
   sel.addEventListener("change", () => {
     const m = MAPS.find((x) => x.id === sel.value);

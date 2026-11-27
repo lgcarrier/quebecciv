@@ -23,7 +23,7 @@ export function yieldGrid(nation, yields, ranks = null, rankOf = 0) {
         <div class="ico" style="color:${esc(y.color)}">${glyph(y, 20)}</div>
         <div class="val" style="color:${esc(y.color)}">${yieldValue(y, v)}</div>
         <div class="lbl">${esc(label)}</div>
-        ${r ? `<div class="rank" title="Rank among the ${rankOf} mapped countries (1 = largest)">#${r} of ${rankOf}</div>` : ""}</div>`;
+        ${r ? `<div class="rank" title="Rang parmi les ${rankOf} territoires de la carte (1 = le plus grand)">${r}<sup>e</sup> sur ${rankOf}</div>` : ""}</div>`;
     })
     .join("");
 }
@@ -46,14 +46,14 @@ const pps = (x) => (x == null ? "–" : `${int(x)} PPS`);
 
 export function amenities(o, n) {
   return `
-    ${statRow("unemployment", null, "Unemployment", o.unemployment, n.unemployment, (x) => pct(x), false)}
-    ${statRow("l-income", null, "Disposable income per inhabitant (PPS)", o.median_income, n.median_income, pps, true)}
-    ${o.poverty != null ? statRow("l-poverty", null, "At risk of poverty or exclusion", o.poverty, n.poverty, (x) => pct(x), false) : ""}
-    ${o.owners != null ? statRow("l-homeownership", null, "Homeowners", o.owners, n.owners, (x) => pct(x), null) : ""}
-    ${o.second_homes != null ? statRow("l-home", null, "Second homes", o.second_homes, n.second_homes, (x) => pct(x), null) : ""}
-    ${o.home_value != null ? statRow("l-home", null, "Median home value", o.home_value, n.home_value, dollars, null) : ""}
-    ${o.median_rent != null ? statRow("l-homeownership", null, "Median rent / month", o.median_rent, n.median_rent, dollars, false) : ""}
-    ${o.rent_burden != null ? statRow("l-burden", null, "Rent ÷ income", o.rent_burden, n.rent_burden, (x) => pct(x), false) : ""}`;
+    ${statRow("unemployment", null, "Chômage", o.unemployment, n.unemployment, (x) => pct(x), false)}
+    ${statRow("l-income", null, "Revenu disponible par habitant", o.median_income, n.median_income, pps, true)}
+    ${o.poverty != null ? statRow("l-poverty", null, "Risque de pauvreté ou d'exclusion", o.poverty, n.poverty, (x) => pct(x), false) : ""}
+    ${o.owners != null ? statRow("l-homeownership", null, "Propriétaires", o.owners, n.owners, (x) => pct(x), null) : ""}
+    ${o.second_homes != null ? statRow("l-home", null, "Résidences secondaires", o.second_homes, n.second_homes, (x) => pct(x), null) : ""}
+    ${o.home_value != null ? statRow("l-home", null, "Valeur médiane des logements", o.home_value, n.home_value, dollars, null) : ""}
+    ${o.median_rent != null ? statRow("l-homeownership", null, "Loyer médian par mois", o.median_rent, n.median_rent, dollars, false) : ""}
+    ${o.rent_burden != null ? statRow("l-burden", null, "Loyer ÷ revenu", o.rent_burden, n.rent_burden, (x) => pct(x), false) : ""}`;
 }
 
 // Workforce by industry with location quotients vs. the nation ("specialisation"). limit = max rows (0 = all).
@@ -65,7 +65,7 @@ export function industries(o, nation, limit = 0) {
     .filter(([, v]) => v > 0)
     .sort((a, b) => b[1] - a[1]);
   if (limit) rows = rows.slice(0, limit);
-  if (!rows.length) return `<p class="muted">No industry data.</p>`;
+  if (!rows.length) return `<p class="muted">Aucune donnée par industrie.</p>`;
   const maxShare = rows[0][1] / total;
   return rows
     .map(([k, v]) => {
@@ -85,7 +85,7 @@ export function industries(o, nation, limit = 0) {
 export const gdpRow = (o) =>
   o.gdp != null
     ? `<div class="stat-row"><span class="sl">${icon("y-gold", null, { size: 14 })}GDP${o.gdp_year ? ` (${o.gdp_year})` : ""}</span><span><b>${money(o.gdp)}</b>${
-        o.population ? `<span class="cmp">${money(o.gdp / o.population)} per person</span>` : ""}</span></div>`
+        o.population ? `<span class="cmp">${money(o.gdp / o.population)} par habitant</span>` : ""}</span></div>`
     : "";
 
 // " · ▲ 3.4% since 2020" from growth / growth_years (cities and countries), compared with Europe in the tooltip.

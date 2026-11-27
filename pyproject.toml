@@ -1,0 +1,9 @@
+[project]
+name = "quebecciv"
+version = "0.1.0"
+description = "Le Québec en carte de jeu de stratégie, à partir de données ouvertes (port d'Europe-Civilization et d'usaciv)"
+requires-python = ">=3.11"
+dependencies = []  # standard library only, on purpose
+
+[tool.uv]
+package = false

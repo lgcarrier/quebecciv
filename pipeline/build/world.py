@@ -24,7 +24,7 @@ from ..core.quebec import (BBOX, CSD_TYPES, HEX_RADIUS_UNITS, MARGIN_UNITS, PRUI
 from ..core.raster import Raster
 from ..core.store import load_interim, save_interim, write_web
 
-REQUIRES = ["statcan_boundaries", "natural_earth", "etopo"]
+REQUIRES = ["statcan_boundaries", "natural_earth", "etopo", "atlas_water"]
 PRODUCES = ["world.json", "_world"]
 
 RASTER_KM = 0.5
@@ -37,6 +37,20 @@ FLAT, HILLS, MOUNTAINS, PEAKS = range(4)
 HILLS_STD, MOUNTAINS_STD, MOUNTAINS_MEAN, PEAKS_MEAN = 40, 140, 900, 1400
 LAND_MIN_ALT_M = -100
 RIVER_MAX_RANK = 12  # Natural Earth scalerank (1 = le plus important)
+# Grands cours d'eau : le Saint-Laurent fluvial (1 à 3 km de large entre Montréal et Québec), l'Outaouais, le fjord du
+# Saguenay… sont plus étroits qu'un hexagone (8,7 km d'un côté à l'autre) : à la majorité des points, ils
+# disparaîtraient. Une étendue d'eau de l'Atlas est « fluviale » si elle couvre au moins RIVER_MIN_KM2 et qu'elle est
+# allongée (portée² / superficie ≥ RIVER_ELONGATION : environ 12 pour le Saint-Laurent fluvial, 40 pour le Saguenay,
+# 3 à 4 pour un lac rond comme le lac Saint-Pierre).
+RIVER_MIN_KM2 = 30.0
+RIVER_ELONGATION = 10.0
+RIVER_MIN_WATER = 0.35
+RIVER_COURSE_KM2 = 60.0  # au-delà, le cours d'eau est tracé d'un bout à l'autre, même où il est plus étroit
+WB_LAKE, WB_RIVER = 1, 2
+SEA_LINK_MIN_HEXES = 20  # a joined river network this long (in hexes) is also linked to the sea…
+SEA_LINK_STEPS = 6  # …when the sea is at most this many steps away
+SEA_RIVERS = {"Fleuve Saint-Laurent"}  # Atlas water bodies joined to the sea (not counted as lakes)
+RIVER_STEP_KM = 0.5
 
 WATER_TABLE = [
     {"id": LAND, "name": "Terre", "rule": "La majorité des points d'échantillonnage de l'hexagone (environ 80, "
@@ -49,8 +63,14 @@ WATER_TABLE = [
     {"id": LAKE, "name": "Lac", "color": "#3a80b0", "rule": "Eau dont la majorité des points tombent dans un lac de "
      "Natural Earth 1:10m, ou eau intérieure qui ne rejoint pas le bord de la carte (lacs et réservoirs)."},
 ]
-WATER_NOTE = ("Une subdivision peuplée qui ne l'emporte dans aucun hexagone (îles, presqu'îles étroites) reçoit "
-              "l'hexagone où elle a le plus de points, pour que chaque municipalité habitée soit sur la terre.")
+WATER_NOTE = ("Les eaux intérieures (fleuve, rivières larges, lacs) viennent des étendues d'eau de l'Atlas du Canada "
+              "au 1:1 000 000 : les limites de Statistique Canada les laissent dans les municipalités. Le long des "
+              "grands cours d'eau plus étroits qu'un hexagone (Saint-Laurent fluvial, Outaouais, Saguenay…), un "
+              f"hexagone devient de l'eau dès que {round(RIVER_MIN_WATER * 100)} % de ses points y tombent ; les "
+              "tronçons sont ensuite reliés par les hexagones les plus mouillés, et le fleuve jusqu'à l'estuaire, pour "
+              "que le cours d'eau reste continu. Il paraît donc plus large qu'en réalité. Une municipalité dont aucun "
+              "hexagone n'est resté de la terre reçoit celui où elle a le plus de points, sauf s'il porte le cours "
+              "d'eau : sa population va alors à l'hexagone québécois le plus proche.")
 RELIEF_TABLE = [
     {"id": FLAT, "name": "Plat", "rule": f"Écart type de l'altitude dans l'hexagone inférieur à {HILLS_STD} m."},
     {"id": HILLS, "name": "Collines", "rule": f"Écart type de l'altitude ≥ {HILLS_STD} m."},
@@ -90,6 +110,170 @@ def hex_offsets(radius_km: float, step_km: float) -> list[tuple[float, float]]:
             if abs(dx) <= half_w and abs(dy) <= radius_km - abs(dx) / math.sqrt(3):
                 out.append((dx, dy))
     return out
+
+
+def ring_area_km2(ring) -> float:
+    return abs(sum(ring[k - 1][0] * ring[k][1] - ring[k][0] * ring[k - 1][1] for k in range(len(ring)))) / 2
+
+
+def is_river_like(rings_km) -> float:
+    """A large, elongated water body (km coordinates): area ≥ RIVER_MIN_KM2 and span² / area ≥ RIVER_ELONGATION.
+    Returns its area in km² (0 if not river-like)."""
+    outer = max(rings_km, key=len)
+    area = ring_area_km2(outer) - sum(ring_area_km2(r) for r in rings_km if r is not outer)
+    if area < RIVER_MIN_KM2:
+        return 0.0
+    xs, ys = [p[0] for p in outer], [p[1] for p in outer]
+    span = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+    return area if span * span / area >= RIVER_ELONGATION else 0.0
+
+
+def course(grid, cand: set, share: list) -> set:
+    """The wettest chain of hexes between the two ends of a water body (its two hexes farthest apart, in steps)."""
+    import heapq
+
+    def farthest(start):
+        dist, q = {start: 0}, [start]
+        for x in q:
+            for n in grid.neighbours(x):
+                if n in cand and n not in dist:
+                    dist[n] = dist[x] + 1
+                    q.append(n)
+        return max(dist, key=dist.get)
+
+    a = farthest(min(cand))
+    b = farthest(a)
+    dist, prev, heap = {a: 0.0}, {}, [(0.0, a)]
+    while heap:
+        d, x = heapq.heappop(heap)
+        if x == b:
+            break
+        if d > dist[x]:
+            continue
+        for n in grid.neighbours(x):
+            if n in cand:
+                nd = d + (1.05 - min(1.0, share[n]))
+                if nd < dist.get(n, 1e18):
+                    dist[n], prev[n] = nd, x
+                    heapq.heappush(heap, (nd, n))
+    out, x = {b}, b
+    while x in prev:
+        x = prev[x]
+        out.add(x)
+    return out
+
+
+def components(grid, cells: set) -> list[set]:
+    """Connected pieces of a set of hexes."""
+    seen, res = set(), []
+    for c in cells:
+        if c in seen:
+            continue
+        comp, stack = set(), [c]
+        seen.add(c)
+        while stack:
+            x = stack.pop()
+            comp.add(x)
+            for n in grid.neighbours(x):
+                if n in cells and n not in seen:
+                    seen.add(n)
+                    stack.append(n)
+        res.append(comp)
+    return res
+
+
+def link_to_sea(grid, piece: set, sea: set, share: list, max_steps: int) -> set:
+    """The wettest chain (cost 1.05 − share) from `piece` to a `sea` hex, through hexes at most `max_steps` steps from
+    `piece`; empty when the sea is farther."""
+    import heapq
+
+    near, frontier = set(piece), list(piece)
+    for _ in range(max_steps):
+        nxt = []
+        for x in frontier:
+            for n in grid.neighbours(x):
+                if n not in near:
+                    near.add(n)
+                    nxt.append(n)
+        frontier = nxt
+    dist, prev = {c: 0.0 for c in piece}, {}
+    heap = [(0.0, c) for c in piece]
+    while heap:
+        d, x = heapq.heappop(heap)
+        if d > dist[x]:
+            continue
+        if x in sea:
+            out = set()
+            x = prev.get(x)
+            while x is not None and x not in piece:
+                out.add(x)
+                x = prev.get(x)
+            return out
+        for n in grid.neighbours(x):
+            if n in near:
+                nd = d + (1.05 - min(1.0, share[n]))
+                if nd < dist.get(n, 1e18):
+                    dist[n], prev[n] = nd, x
+                    heapq.heappush(heap, (nd, n))
+    return set()
+
+
+def join_components(grid, cand: set, marked: set, share: list) -> set:
+    """`marked` plus the cheapest links (cost 1.05 − share per hex, through `cand`) joining its connected pieces."""
+    import heapq
+
+    out = set(marked)
+
+    def comps(cells):
+        seen, res = set(), []
+        for c in cells:
+            if c in seen:
+                continue
+            comp, stack = set(), [c]
+            seen.add(c)
+            while stack:
+                x = stack.pop()
+                comp.add(x)
+                for n in grid.neighbours(x):
+                    if n in cells and n not in seen:
+                        seen.add(n)
+                        stack.append(n)
+            res.append(comp)
+        return res
+
+    isolated = set()  # cells of pieces that no path through `cand` links to any other piece
+    while True:
+        cs = [c for c in comps(out) if not c <= isolated]
+        if len(cs) <= 1:
+            return out
+        cs.sort(key=len, reverse=True)
+        main = cs[0]
+        dist = {c: 0.0 for c in main}
+        prev = {}
+        heap = [(0.0, c) for c in main]
+        hit = None
+        while heap:
+            d, x = heapq.heappop(heap)
+            if d > dist.get(x, 1e18):
+                continue
+            if x in out and x not in main:
+                hit = x
+                break
+            for n in grid.neighbours(x):
+                if n not in cand:
+                    continue
+                nd = d + (1.05 - min(1.0, share[n]))
+                if nd < dist.get(n, 1e18):
+                    dist[n] = nd
+                    prev[n] = x
+                    heapq.heappush(heap, (nd, n))
+        if hit is None:  # this piece is cut off from the others through `cand`: leave it as it is
+            isolated |= main
+            continue
+        x = hit
+        while x in prev:
+            out.add(x)
+            x = prev[x]
 
 
 def classify_relief(mean: float, std: float) -> int:
@@ -173,6 +357,27 @@ def build() -> None:
     for lk in ne["lakes"]:
         for poly in lk["polys"]:
             lakes.fill_polygon([[km(lon, lat) for lon, lat in ring] for ring in poly], 1)
+    # Atlas water bodies (1:1M): inland water the census polygons keep inside municipalities. The St. Lawrence is
+    # marked apart (WB_RIVER) so that it stays joined to the estuary (sea/coast), the others count as lakes.
+    wb = load_interim("atlas_water")
+    wbr = Raster(gx0, gy0, RASTER_KM, rw, rh, fill=0, typecode="b")
+    for body in wb["waterbodies"]:
+        val = WB_RIVER if body["name"] in SEA_RIVERS else WB_LAKE
+        wbr.fill_polygon([[km(lon, lat) for lon, lat in ring] for ring in body["rings"]], val)
+    for isl in wb["islands"]:  # the water bodies keep no holes for their islands
+        wbr.fill_polygon([[km(lon, lat) for lon, lat in ring] for ring in isl["rings"]], 0)
+    wbd = wbr.data
+    river_bodies = []  # indices into wb["waterbodies"] of the river-like bodies
+    river_big = []  # …and whether each is big enough to be drawn along its whole course
+    rvr = Raster(gx0, gy0, RASTER_KM, rw, rh, fill=-1, typecode="h")
+    for k, body in enumerate(wb["waterbodies"]):
+        rings = [[km(lon, lat) for lon, lat in ring] for ring in body["rings"]]
+        area = is_river_like(rings)
+        if area:
+            rvr.fill_polygon(rings, len(river_bodies))
+            river_bodies.append(k)
+            river_big.append(area >= RIVER_COURSE_KM2)
+    rvd = rvr.data
     er_codes = [e["uid"] for e in sb["er"]]
     er_r = Raster(gx0, gy0, RASTER_KM, rw, rh, fill=-1, typecode="b")
     for k, e in enumerate(sb["er"]):
@@ -214,6 +419,8 @@ def build() -> None:
     county = [-1] * grid.size
     land_samples = [0] * grid.size
     lake_share = [0.0] * grid.size
+    water_share = [0.0] * grid.size  # share of the hex's sample points on water (outside land, or in an Atlas water body)
+    river_cells = defaultdict(set)  # river-like body → hexes with a sample point in it
     csd_cells = defaultdict(list)  # csd index → [[cell, count, sum_ux, sum_uy]]
     best_for_csd: dict[int, tuple[int, int]] = {}
     wpx = land.w
@@ -227,7 +434,11 @@ def build() -> None:
         for dx, dy in offs:
             x, y = cx + dx, cy + dy
             c, r = int((x - gx0) // RASTER_KM), int((gy0 - y) // RASTER_KM)
-            v = ld[r * wpx + c] if 0 <= c < wpx and 0 <= r < land.h else WATER_CELL
+            inside = 0 <= c < wpx and 0 <= r < land.h
+            v = ld[r * wpx + c] if inside else WATER_CELL
+            wv = wbd[r * wpx + c] if inside else 0
+            if wv and v != WATER_CELL:  # land polygon, but under an Atlas water body: water
+                v = WATER_CELL
             if centre_val is None:
                 centre_val = v
             if v >= 0:
@@ -239,11 +450,12 @@ def build() -> None:
                 n_foreign += 1
             else:
                 n_water += 1
-                if lakes.data[r * wpx + c] if 0 <= c < wpx and 0 <= r < land.h else 0:
+                if wv == WB_LAKE or (inside and lakes.data[r * wpx + c]):
                     n_lake += 1
         n_qc = sum(counts.values())
         land_samples[i] = n_qc
         lake_share[i] = n_lake / n_water if n_water else 0.0
+        water_share[i] = n_water / ns
         for k, n in counts.items():
             csd_cells[k].append([i, n, sums[k][0], sums[k][1]])
             if n > best_for_csd.get(k, (-1, 0))[1]:
@@ -263,10 +475,74 @@ def build() -> None:
         elif cat == "foreign":
             owner[i] = FOREIGN
 
-    # Every populated SDR gets at least its best hex as Québec land.
+    # Hexes touched by each river-like body: every raster pixel (500 m) of it, so a stretch narrower than the 1 km
+    # sample lattice still links its hexes.
+    for r in range(rvr.h):
+        row = rvd[r * wpx:(r + 1) * wpx]
+        if max(row) < 0:
+            continue
+        ky = gy0 - (r + 0.5) * RASTER_KM
+        for c, b in enumerate(row):
+            if b >= 0:
+                cell = grid.cell_at(*to_units(gx0 + (c + 0.5) * RASTER_KM, ky))
+                if cell >= 0:
+                    river_cells[b].add(cell)
+    # Major rivers narrower than a hex (see RIVER_* above): along each river-like Atlas water body, hexes with at least
+    # RIVER_MIN_WATER of water become water, then the pieces are joined through the body's other hexes (the
+    # wettest way), so the river reads as one chain of water hexes from end to end.
+    river_hex = 0
+    for b, cells in river_cells.items():
+        cand = set(cells)
+        marked = {c for c in cand if owner[c] == WATER_CELL or water_share[c] >= RIVER_MIN_WATER}
+        if river_big[b]:  # a long river: also its whole course, end to end
+            marked |= course(grid, cand, water_share)
+        for c in join_components(grid, cand, marked, water_share):
+            if owner[c] != WATER_CELL:
+                owner[c] = WATER_CELL
+                county[c] = -1
+                river_hex += 1
+    # The Atlas cuts one river into several bodies (at a named lake, a rapid, an island): join the pieces of the
+    # whole network the same way, through hexes touched by these bodies only, so unrelated waters stay apart.
+    network = set().union(*river_cells.values()) if river_cells else set()
+    joined = join_components(grid, network, {c for c in network if owner[c] == WATER_CELL}, water_share)
+    for c in joined:
+        if owner[c] != WATER_CELL:
+            owner[c] = WATER_CELL
+            county[c] = -1
+            river_hex += 1
+    # …and a long network to the sea when it stops a few hexes short of it: at Québec the river is 1 to 2 km wide,
+    # thinner than the sample lattice, and the Atlas hands over to the census coastline.
+    sea_cells = set()  # water joined to the open sea at the edge of the map
+    for i in range(grid.size):
+        col, row = grid.col_row(i)
+        if owner[i] == WATER_CELL and lake_share[i] < 0.5 and (col in (0, grid.cols - 1) or row in (0, grid.rows - 1)):
+            sea_cells.add(i)
+    sq = deque(sea_cells)
+    while sq:
+        for j in grid.neighbours(sq.popleft()):
+            if j not in sea_cells and owner[j] == WATER_CELL and j not in network:
+                sea_cells.add(j)
+                sq.append(j)
+    inland = {i for i in range(grid.size) if owner[i] == WATER_CELL and i not in sea_cells}
+    for piece in components(grid, inland):
+        if len(piece & network) >= SEA_LINK_MIN_HEXES:
+            for c in link_to_sea(grid, piece, sea_cells, water_share, SEA_LINK_STEPS):
+                network.add(c)
+                if owner[c] != WATER_CELL:
+                    owner[c] = WATER_CELL
+                    county[c] = -1
+                    river_hex += 1
+    river_set = {c for c in network if owner[c] == WATER_CELL}
+
+    # Every SDR with land gets at least one hex of Québec land: its best one, if none of its hexes is Québec land
+    # (an island, or a strip of shore whose hexes all went to the water or to a neighbour).
+    # An island SDR whose only hexes carry the river (Sorel islands, L'Île-Dorval…) keeps no hex: the river stays
+    # unbroken and its residents go to the nearest Québec hex (see places.py).
     forced = 0
     for k, (cell, _) in best_for_csd.items():
-        if owner[cell] < 0:
+        if cell in river_set:
+            continue
+        if all(owner[c[0]] < 0 for c in csd_cells[k]):
             owner[cell] = csd_state[k]
             county[cell] = cd_index[csd[k]["uid"][:4]]
             forced += 1
@@ -278,6 +554,8 @@ def build() -> None:
         ring = max((poly[0] for poly in csd_km[k]), key=len)
         x, y = sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring)
         csd_point[k] = to_units(x, y)
+    print(f"    {len(river_bodies)} river-like water bodies ({sum(river_big)} drawn end to end); "
+          f"{river_hex} hexes turned to water along them")
     print(f"    {len(offs)} samples per hex; {forced} hexes given to an SDR with no majority; "
           f"{len(csd_point)} SDR too small for any sample point")
 

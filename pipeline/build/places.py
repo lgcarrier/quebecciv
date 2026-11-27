@@ -5,7 +5,9 @@
 * Sa population de 2021 (et de 2016) est répartie entre les hexagones au prorata de ses points d'échantillonnage,
   donc uniformément sur sa superficie terrestre : c'est une approximation (une grande municipalité rurale ou un
   territoire non organisé est réparti sur tout son territoire, même si les gens vivent au village). La part tombée
-  dans un hexagone d'eau ou de voisin va au plus proche hexagone du Québec.
+  dans un hexagone d'eau ou de voisin reste dans la même municipalité : elle est répartie sur ses autres hexagones du
+  Québec. Seule une SDR sans aucun hexagone du Québec à elle (petite île, ou petite municipalité riveraine dont tous les
+  hexagones portent le fleuve ou une rivière) va à l'hexagone québécois le plus proche.
 
 Interim `_places` : `columns`/`rows` (une ligne par SDR), `hexpop` et `hexpop16` (par cellule, réels), `hexpop21b` (2021, seulement les SDR qui ont aussi un chiffre de 2016)."""
 
@@ -54,6 +56,9 @@ def build() -> None:
     hexpop16 = [0.0] * grid.size
     hexpop21b = [0.0] * grid.size  # 2021 population of the SDR that also have a 2016 count (for growth)
     rows = []
+    moved_out = [0.0]  # 2021 residents whose points fell on water/neighbour hexes, kept in their own municipality
+    other_sdr = [0]  # SDR with no Québec land hex of their own (their people go to the nearest one)
+    other_names = []
     for k, uid in enumerate(w["csd"]):
         p = pops.get(uid)
         if p is None:
@@ -68,15 +73,29 @@ def build() -> None:
             if cell not in cell_set:  # concave SDR: use the sample mean of its cell nearest to the centroid
                 best = min(cells, key=lambda c: (c[2] / c[1] - mx) ** 2 + (c[3] / c[1] - my) ** 2)
                 mx, my, cell = best[2] / best[1], best[3] / best[1], best[0]
-            for c, n, _, _ in cells:
-                tgt = nearest_owned(grid, owner, c)
-                if tgt < 0:
-                    raise ValueError(f"SDR {uid} : aucun hexagone du Québec près de la cellule {c}")
+            # Only the SDR's own Québec land hexes receive its population (pro rata of their points); the share of
+            # its points that fell in hexes now water or a neighbour's stays in the same municipality. Only an SDR
+            # with no Québec land hex at all sends it to the nearest Québec hex.
+            owned = [c for c in cells if owner[c[0]] >= 0]
+            if owned:
+                spread = [(c[0], c[1]) for c in owned]
+                moved_out[0] += sum(c[1] for c in cells if owner[c[0]] < 0) / total * (p["pop2021"] or 0)
+            else:
+                spread = []
+                for c, n, _, _ in cells:
+                    tgt = nearest_owned(grid, owner, c)
+                    if tgt < 0:
+                        raise ValueError(f"SDR {uid} : aucun hexagone du Québec près de la cellule {c}")
+                    spread.append((tgt, n))
+                other_sdr[0] += 1
+                other_names.append(f"{p['name']} ({p['pop2021']})")
+            tot = sum(n for _, n in spread)
+            for tgt, n in spread:
                 if p["pop2021"] is not None:
-                    hexpop[tgt] += p["pop2021"] * n / total
+                    hexpop[tgt] += p["pop2021"] * n / tot
                 if p["pop2021"] is not None and p["pop2016"] is not None:
-                    hexpop16[tgt] += p["pop2016"] * n / total
-                    hexpop21b[tgt] += p["pop2021"] * n / total
+                    hexpop16[tgt] += p["pop2016"] * n / tot
+                    hexpop21b[tgt] += p["pop2021"] * n / tot
         else:
             mx, my = w["csd_point"][str(k)]
             cell = grid.cell_at(mx, my)
@@ -91,7 +110,11 @@ def build() -> None:
                      round(mx, 1), round(my, 1), cell, uid[:4], w["csd_state"][k]])
     total = sum(hexpop)
     official = sp["province"]["pop2021"]
-    print(f"    {len(rows)} SDR; population on the hexes {total:,.0f} (official Québec total {official:,})")
+    print(f"    {len(rows)} SDR; population on the hexes {total:,.0f} (official Québec total {official:,}); "
+          f"{moved_out[0]:,.0f} residents moved off water/neighbour hexes within their municipality; "
+          f"{other_sdr[0]} SDR placed on the nearest Québec hex")
+    if other_names:
+        print("      (" + ", ".join(other_names) + ")")
     if abs(total - official) > 1:
         raise ValueError("la population répartie ne correspond pas au total officiel")
     save_interim("_places", {"columns": COLUMNS, "rows": rows,

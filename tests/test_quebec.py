@@ -70,10 +70,32 @@ class GridTest(unittest.TestCase):
     def test_quebec_hex_count(self):
         w = load("world.json")
         n = sum(1 for o in w["owner"] if o >= 0)
-        self.assertEqual(n, 23_190)
-        # ~65 km² par hexagone : l'aire couverte doit être proche de l'aire totale du Québec (~1,67 M km² avec l'eau douce).
+        self.assertEqual(n, 21_567)
+        # ~65 km² par hexagone : l'aire de la terre québécoise (eaux intérieures exclues) reste de l'ordre de la
+        # superficie du Québec.
         hex_km2 = 3 * math.sqrt(3) / 2 * 5.0 ** 2
-        self.assertTrue(1.4e6 < n * hex_km2 < 1.7e6, n * hex_km2)
+        self.assertTrue(1.3e6 < n * hex_km2 < 1.6e6, n * hex_km2)
+
+    def test_st_lawrence_is_continuous_water(self):
+        # Le Saint-Laurent fluvial est une suite d'hexagones d'eau, du lac Saint-Louis (Montréal) à l'estuaire.
+        w = load("world.json")
+        proj = load("projection.json")
+        from pipeline.core.geo import MapProjection
+        mp = MapProjection(proj["min_x"], proj["max_y"], proj["margin"], proj["scale"])
+        grid = HexGrid.covering(w["width"], w["height"], w["grid"]["radius"])
+        start = grid.cell_at(*mp(-73.85, 45.40))  # lac Saint-Louis
+        goal = grid.cell_at(*mp(-68.3, 48.9))  # estuaire (étiquette de la carte)
+        lac_st_pierre = grid.cell_at(*mp(-72.85, 46.20))
+        for c in (start, goal, lac_st_pierre):
+            self.assertEqual(w["owner"][c], -1, c)
+        seen, q = {start}, [start]
+        for c in q:
+            for n in grid.neighbours(c):
+                if n not in seen and w["owner"][n] == -1:
+                    seen.add(n)
+                    q.append(n)
+        self.assertIn(lac_st_pierre, seen)
+        self.assertIn(goal, seen)
 
     def test_quebec_extremes_are_on_quebec_hexes(self):
         # Des lieux aux quatre coins du Québec tombent dans la carte et sur un hexagone québécois.

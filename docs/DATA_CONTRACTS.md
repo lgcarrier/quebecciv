@@ -6,7 +6,7 @@ l'indice d'un hexagone dans la grille (`col + row × cols`, voir `pipeline/core/
 
 | Fichier | Bâti par | Contenu |
 |---|---|---|
-| `world.json` | `build/world.py` | Grille (`grid`: radius 25, cols 202, rows 281), `owner` par hexagone (indice de région ≥ 0, −1 eau, −2 voisin), `county` (indice de DR), `elev`, `water`, `relief`, `cover` (tout à 0 pour l'instant), tables en français, `states` (17 régions), `counties` (98 DR), `rivers`, `features` (noms de mers). |
+| `world.json` | `build/world.py` | Grille (`grid`: radius 25, cols 202, rows 281), `owner` par hexagone (indice de région ≥ 0, −1 eau, −2 voisin ; l'eau comprend le fleuve, les grandes rivières et les lacs de l'Atlas du Canada), `county` (indice de DR), `elev`, `water`, `relief`, `cover` (tout à 0 pour l'instant), tables en français, `states` (17 régions), `counties` (98 DR), `rivers`, `features` (noms de mers). |
 | `projection.json` | `build/projection.py` | LAEA sphérique, `lon0` −68,5, `lat0` 53,5, `min_x`, `max_y`, `margin`, `scale`, `insets` vide. |
 | `states.json` | `build/states.py` | Les 17 régions : population 2021 et 2016, croissance, superficie terrestre, densité, municipalités, SDR sans chiffre publié, rangs. |
 | `nation.json` | `build/states.py` | Le Québec : `population` (somme des SDR) et `population_official` (ligne de la province), croissance, superficie, genres de SDR, SDR sans chiffre. `yields` vide. |

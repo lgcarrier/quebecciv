@@ -13,7 +13,8 @@ from pipeline.core.hexgrid import HexGrid
 from pipeline.core.quebec import HEX_RADIUS_UNITS, LAT0, LON0, SCALE
 from pipeline.core.raster import Raster
 
-WEB = Path(__file__).resolve().parents[1] / "web" / "data"
+ROOT = Path(__file__).resolve().parents[1]
+WEB = ROOT / "web" / "data"
 # Population du Québec au Recensement de 2021, tableau 98-10-0002-01 de Statistique Canada (ligne de la province).
 OFFICIAL_QC_2021 = 8_501_833
 
@@ -70,7 +71,7 @@ class GridTest(unittest.TestCase):
     def test_quebec_hex_count(self):
         w = load("world.json")
         n = sum(1 for o in w["owner"] if o >= 0)
-        self.assertEqual(n, 21_567)
+        self.assertEqual(n, 22_575)
         # ~65 km² par hexagone : l'aire de la terre québécoise (eaux intérieures exclues) reste de l'ordre de la
         # superficie du Québec.
         hex_km2 = 3 * math.sqrt(3) / 2 * 5.0 ** 2
@@ -96,6 +97,25 @@ class GridTest(unittest.TestCase):
                     q.append(n)
         self.assertIn(lac_st_pierre, seen)
         self.assertIn(goal, seen)
+        chicoutimi = grid.cell_at(*mp(-71.06, 48.43))  # le Saguenay rejoint aussi l'estuaire
+        self.assertIn(chicoutimi, seen)
+
+    @unittest.skipUnless((ROOT / "data" / "interim" / "_places.json").exists(), "data/interim absent")
+    def test_every_inhabited_municipality_has_land_of_its_own(self):
+        # Chaque SDR habitée garde au moins un hexagone de terre où elle a des points (îles de Montréal, Laval,
+        # Île Perrot, Île d'Orléans, Kirkland, Beaconsfield…), et sa population y reste.
+        wi = json.loads((ROOT / "data" / "interim" / "_world.json").read_text())["data"]
+        pl = json.loads((ROOT / "data" / "interim" / "_places.json").read_text())["data"]
+        self.assertEqual(pl["without_own_hex"], [])
+        pop = {r[0]: r[3] for r in pl["rows"]}
+        owner = wi["owner"]
+        for k, cells in wi["csd_cells"].items():
+            uid = wi["csd"][int(k)]
+            if pop.get(uid):
+                self.assertTrue(any(owner[c[0]] >= 0 for c in cells), wi["csd_name"][int(k)])
+        names = {wi["csd_name"][int(k)] for k in wi["csd_cells"]}
+        for name in ("Kirkland", "Beaconsfield", "L'Île-Perrot", "Laval", "Saint-Pierre-de-l'Île-d'Orléans"):
+            self.assertIn(name, names)
 
     def test_quebec_extremes_are_on_quebec_hexes(self):
         # Des lieux aux quatre coins du Québec tombent dans la carte et sur un hexagone québécois.

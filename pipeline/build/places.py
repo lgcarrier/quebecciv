@@ -6,8 +6,8 @@
   donc uniformément sur sa superficie terrestre : c'est une approximation (une grande municipalité rurale ou un
   territoire non organisé est réparti sur tout son territoire, même si les gens vivent au village). La part tombée
   dans un hexagone d'eau ou de voisin reste dans la même municipalité : elle est répartie sur ses autres hexagones du
-  Québec. Seule une SDR sans aucun hexagone du Québec à elle (petite île, ou petite municipalité riveraine dont tous les
-  hexagones portent le fleuve ou une rivière) va à l'hexagone québécois le plus proche.
+  Québec. Chaque SDR garde au moins un hexagone de terre (world.py) ; seule une SDR
+  trop petite pour un point d'échantillonnage va à l'hexagone de son centre, ou au plus proche s'il est dans l'eau.
 
 Interim `_places` : `columns`/`rows` (une ligne par SDR), `hexpop` et `hexpop16` (par cellule, réels), `hexpop21b` (2021, seulement les SDR qui ont aussi un chiffre de 2016)."""
 
@@ -59,6 +59,7 @@ def build() -> None:
     moved_out = [0.0]  # 2021 residents whose points fell on water/neighbour hexes, kept in their own municipality
     other_sdr = [0]  # SDR with no Québec land hex of their own (their people go to the nearest one)
     other_names = []
+    without_own = []  # inhabited SDR whose people are not on a hex of their own
     for k, uid in enumerate(w["csd"]):
         p = pops.get(uid)
         if p is None:
@@ -89,6 +90,8 @@ def build() -> None:
                     spread.append((tgt, n))
                 other_sdr[0] += 1
                 other_names.append(f"{p['name']} ({p['pop2021']})")
+                if p["pop2021"]:
+                    without_own.append(uid)
             tot = sum(n for _, n in spread)
             for tgt, n in spread:
                 if p["pop2021"] is not None:
@@ -100,6 +103,10 @@ def build() -> None:
             mx, my = w["csd_point"][str(k)]
             cell = grid.cell_at(mx, my)
             tgt = nearest_owned(grid, owner, cell)
+            if tgt != cell and p["pop2021"]:
+                other_sdr[0] += 1
+                other_names.append(f"{p['name']} ({p['pop2021']})")
+                without_own.append(uid)
             if p["pop2021"] is not None:
                 hexpop[tgt] += p["pop2021"]
             if p["pop2021"] is not None and p["pop2016"] is not None:
@@ -119,4 +126,4 @@ def build() -> None:
         raise ValueError("la population répartie ne correspond pas au total officiel")
     save_interim("_places", {"columns": COLUMNS, "rows": rows,
                              "hexpop": [round(v, 2) for v in hexpop], "hexpop16": [round(v, 2) for v in hexpop16],
-                             "hexpop21b": [round(v, 2) for v in hexpop21b]})
+                             "hexpop21b": [round(v, 2) for v in hexpop21b], "without_own_hex": without_own})
